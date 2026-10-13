@@ -8,6 +8,9 @@
   Tramage, glitch et effets rétro pour tes images, GIF et vidéos.<br>
   Gratuit, open source, sur macOS, Windows et Linux.
 </p>
+<p align="center">
+  <sub>Projet d'expérimentation étudiant, réalisé en partie avec l'aide de Claude Code.</sub>
+</p>
 
 <p align="center">
   <a href="https://github.com/saturnes00/CrunshCrab/releases/latest"><img src="https://img.shields.io/github/v/release/saturnes00/CrunshCrab?label=version&color=ff5b3a" alt="Version"></a>
@@ -112,6 +115,14 @@ Envie d'ajouter une palette ? Une ligne dans `PALETTES`, dans `moteur.py`, suffi
 ```python
 "Ma palette": ["#000000", "#ff0066", "#ffffff"],
 ```
+
+## À propos du projet
+
+Crunch Crab est un projet d'expérimentation, fait par un étudiant pour apprendre et tester des idées autour de l'image, de la vidéo et des applis de bureau.
+
+Une partie du code a été écrite avec l'aide d'outils d'intelligence artificielle. Je préfère le dire clairement : l'app fonctionne et elle est testée sur les trois systèmes, mais ce n'est pas un logiciel professionnel. Il peut rester des bugs ou des choix techniques pas idéaux.
+
+Les retours, signalements de bugs et suggestions sont les bienvenus dans les [Issues](https://github.com/saturnes00/CrunshCrab/issues) !
 
 ## Crédits
 
