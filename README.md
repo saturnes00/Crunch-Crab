@@ -9,7 +9,7 @@
   Gratuit, open source, sur macOS, Windows et Linux.
 </p>
 <p align="center">
-  <sub>Projet d'expérimentation étudiant, réalisé en partie avec l'aide de Claude Code.</sub>
+  <p><bold>Projet d'expérimentation étudiant, réalisé en partie avec l'aide de Claude Code.</bold></>
 </p>
 
 <p align="center">
