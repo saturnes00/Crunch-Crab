@@ -661,8 +661,8 @@ class Nuancier(QWidget):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             if c == "+":
                 b.setToolTip("Ajouter une couleur")
-                b.setStyleSheet(f"border-radius: 14px; border: 1px dashed #3a3530;"
-                                f"background: transparent; color: {DISCRET}; font-size: 14px;")
+                b.setStyleSheet(f"border-radius: 14px; border: 1px dashed #3a3530; padding: 0;"
+                                f"background: transparent; color: {DISCRET}; font-size: 16px;")
                 b.clicked.connect(self._ajouter)
                 b.setEnabled(len(self.couleurs) < 64)
             else:
