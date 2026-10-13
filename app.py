@@ -2,12 +2,14 @@
 Crunch Crab — interface graphique.
 
 Organisation :
-  - Vue          : la grande zone d'aperçu (zoom, déplacement, comparaison, glisser-déposer)
-  - Curseur, ... : les petits composants de réglage du panneau de droite
-  - Rendu        : calcule l'aperçu en arrière-plan pour ne jamais figer l'interface
-  - Lecture      : lit la vidéo en temps réel
-  - Export       : écrit le fichier final avec une barre de progression
-  - Fenetre      : assemble le tout
+  - theme.py      : couleurs, polices, feuille de style, icônes
+  - composants.py : les éléments du panneau de réglages (curseurs, sections, galerie…)
+  - Vue           : la grande zone d'aperçu (zoom, déplacement, comparaison, glisser-déposer)
+  - Rendu         : calcule l'aperçu en arrière-plan pour ne jamais figer l'interface
+  - Miniatures    : calcule les vignettes de la galerie de styles, en arrière-plan aussi
+  - Lecture       : lit la vidéo en temps réel
+  - Export        : écrit le fichier final avec une barre de progression
+  - Fenetre       : assemble le tout
 """
 
 import json
@@ -21,118 +23,28 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from PIL import Image, ImageOps
-from PySide6.QtCore import QPointF, QRectF, QSettings, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import (QAction, QColor, QFont, QIcon, QImage, QKeySequence, QPainter,
-                           QPen, QPixmap, QShortcut)
-from PySide6.QtWidgets import (QApplication, QCheckBox, QColorDialog, QComboBox, QFileDialog,
-                               QFrame, QGridLayout, QHBoxLayout, QLabel, QMainWindow,
+from PySide6.QtCore import QObject, QPointF, QRectF, QSettings, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import (QAction, QColor, QFont, QFontMetricsF, QIcon, QImage, QKeySequence,
+                           QPainter, QPainterPath, QPen, QPixmap, QShortcut)
+from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow,
                                QMessageBox, QProgressDialog, QPushButton, QScrollArea,
                                QSizePolicy, QSlider, QVBoxLayout, QWidget)
 
 import moteur
+import theme as t
 import video
+from composants import Curseur, Galerie, Interrupteur, Liste, Nuancier, Section, Vignette
 
-# Dans l'app empaquetée (PyInstaller), les fichiers sont dans sys._MEIPASS
-DOSSIER = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+DOSSIER = t.DOSSIER
 NOM = "Crunch Crab"
-MAC = sys.platform == "darwin"
-WINDOWS = sys.platform.startswith("win")
+VERSION = "1.2.0"
+MAC = t.MAC
+WINDOWS = t.WINDOWS
 
 # Les raccourcis s'affichent à la façon de chaque système
 CMD = "⌘" if MAC else "Ctrl+"
 MAJ_CMD = "⇧⌘" if MAC else "Ctrl+Maj+"
 GESTIONNAIRE = "le Finder" if MAC else ("l'Explorateur" if WINDOWS else "le dossier")
-
-# ---------------------------------------------------------------------------
-# Thème : très sombre, chaud, avec un accent corail
-# ---------------------------------------------------------------------------
-
-ACCENT = "#ff5b3a"
-ACCENT_CLAIR = "#ff7d61"
-FOND = "#060607"
-PANNEAU = "#0b0b0d"
-CHAMP = "#121215"
-CHAMP_SURVOL = "#18181c"
-BORD = "#1b1b20"
-TEXTE = "#ece7e1"
-DISCRET = "#77716b"
-TRES_DISCRET = "#46423e"
-TITRES = "Avenir Next" if MAC else ("Segoe UI" if WINDOWS else "Noto Sans")
-MONO = "Menlo" if MAC else ("Consolas" if WINDOWS else "DejaVu Sans Mono")
-
-STYLE = f"""
-* {{ color: {TEXTE}; font-size: 12px; }}
-QMainWindow, QWidget#racine {{ background: {FOND}; }}
-QWidget#panneau, QWidget#panneauInterieur, QScrollArea#defile {{ background: {PANNEAU}; border: none; }}
-QWidget#barre, QWidget#transport {{ background: {PANNEAU}; }}
-QFrame#separateur {{ background: {BORD}; max-height: 1px; min-height: 1px; }}
-QFrame#separateurV {{ background: {BORD}; max-width: 1px; min-width: 1px; }}
-
-QLabel#marque {{ font-family: "{TITRES}"; font-size: 16px; font-weight: 700; }}
-QLabel#sousTitre {{ color: {DISCRET}; font-size: 11px; font-style: italic; padding: 0 16px 6px 16px; }}
-QLabel#valeur {{ color: {DISCRET}; font-family: {MONO}; font-size: 11px; }}
-QLabel#info {{ color: {DISCRET}; font-family: {MONO}; font-size: 11px; }}
-
-QPushButton {{
-    background: {CHAMP}; border: 1px solid {BORD}; border-radius: 8px; padding: 6px 12px;
-}}
-QPushButton:hover {{ background: {CHAMP_SURVOL}; border-color: #2a2a30; }}
-QPushButton:pressed {{ background: #1f1f24; }}
-QPushButton:disabled {{ color: {TRES_DISCRET}; }}
-QPushButton#principal {{ background: {ACCENT}; color: #1a0904; border: none; font-weight: 700;
-                         padding: 7px 16px; }}
-QPushButton#principal:hover {{ background: {ACCENT_CLAIR}; }}
-QPushButton#principal:disabled {{ background: #2b1510; color: #6e3a2d; }}
-QPushButton#icone {{ padding: 5px 9px; font-size: 14px; }}
-QPushButton#segment {{ padding: 4px 9px; border-radius: 6px; font-family: {MONO}; font-size: 11px; }}
-QPushButton#segment:checked {{ background: {ACCENT}; color: #1a0904; border: none; }}
-QPushButton#bascule:checked {{ background: #2a120c; border-color: {ACCENT}; color: {ACCENT_CLAIR}; }}
-QPushButton#section {{
-    background: transparent; border: none; text-align: left; padding: 13px 0 4px 16px;
-    font-family: "{TITRES}"; font-size: 13px; font-weight: 600; color: {TEXTE};
-}}
-QPushButton#section:hover {{ color: {ACCENT_CLAIR}; }}
-QPushButton#reinit {{ background: transparent; border: none; color: {TRES_DISCRET};
-                      padding: 13px 14px 4px 6px; font-size: 13px; }}
-QPushButton#reinit:hover {{ color: {ACCENT_CLAIR}; }}
-QPushButton#de {{ background: transparent; border: none; padding: 0 2px; font-size: 13px; }}
-QPushButton#lecture {{ border-radius: 15px; min-width: 30px; max-width: 30px;
-                       min-height: 30px; max-height: 30px; padding: 0; font-size: 12px; }}
-
-QComboBox {{
-    background: {CHAMP}; border: 1px solid {BORD}; border-radius: 8px; padding: 5px 10px;
-}}
-QComboBox:hover {{ border-color: #2c2c33; }}
-QComboBox::drop-down {{ border: none; width: 18px; }}
-QComboBox QAbstractItemView {{
-    background: #101013; border: 1px solid {BORD}; selection-background-color: {ACCENT};
-    selection-color: #1a0904; padding: 4px; outline: none;
-}}
-
-QSlider::groove:horizontal {{ height: 3px; background: #1e1e23; border-radius: 1px; }}
-QSlider::sub-page:horizontal {{ background: #b8442c; border-radius: 1px; }}
-QSlider::handle:horizontal {{
-    background: {TEXTE}; width: 12px; height: 12px; margin: -5px 0; border-radius: 6px;
-}}
-QSlider::handle:horizontal:hover {{ background: #ffffff; }}
-
-QCheckBox {{ spacing: 8px; }}
-QCheckBox::indicator {{
-    width: 26px; height: 14px; border-radius: 7px; background: #1e1e23; border: 1px solid {BORD};
-}}
-QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
-
-QScrollBar:vertical {{ background: transparent; width: 7px; margin: 0; }}
-QScrollBar::handle:vertical {{ background: #222227; border-radius: 3px; min-height: 30px; }}
-QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
-QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
-
-QProgressDialog, QMessageBox {{ background: {PANNEAU}; }}
-QProgressBar {{ background: #1a1a1e; border: none; border-radius: 4px; height: 8px;
-                text-align: center; color: transparent; }}
-QProgressBar::chunk {{ background: {ACCENT}; border-radius: 4px; }}
-QToolTip {{ background: #151518; color: {TEXTE}; border: 1px solid {BORD}; padding: 5px; }}
-"""
 
 # La mascotte, en pixel art (X = carapace, O = œil)
 CRABE = [
@@ -151,13 +63,14 @@ CRABE = [
 ASTUCES = [
     "double-clique sur un réglage pour le remettre à zéro.",
     f"{CMD}Z pour annuler, {MAJ_CMD}Z pour rétablir. Tu peux tout tester, rien n'est grave.",
-    "le bouton 🎲 tire un look au hasard. Des fois, ça tombe super bien.",
+    "le bouton « Surprends-moi » tire un look au hasard. Des fois, ça tombe super bien.",
     "appuie sur C pour comparer avant et après.",
     "pince le trackpad pour zoomer sur les pixels." if MAC else
     "Ctrl + molette pour zoomer sur les pixels.",
     "« Répartir sur la palette » fait des bichromies super facilement.",
     "le tri de pixels rend bien autour de 40 %.",
     f"garde tes looks préférés avec {CMD}S, comme ça tu les retrouves quand tu veux.",
+    "les flèches à côté de la méthode et de la palette les font défiler une à une.",
 ]
 
 # Styles prêts à l'emploi (seuls les réglages listés changent, le reste revient par défaut)
@@ -237,21 +150,75 @@ def format_temps(s):
     return f"{int(s // 60):02d}:{s % 60:05.2f}"
 
 
-def dessiner_crabe(p, x, y, taille, couleur, oeil=QColor(TEXTE)):
+def scene_exemple(w=360, h=240):
+    """Petit paysage de synthèse (ciel, soleil, montagnes, mer) : il sert aux miniatures
+    de la galerie tant qu'aucune image n'est ouverte."""
+    y, x = np.mgrid[0:h, 0:w].astype(np.float32)
+    v = y / h
+    ciel = np.stack([40 + 215 * v ** 1.4, 22 + 110 * v ** 1.8, 70 + 30 * (1 - v)], -1)
+    img = ciel.copy()
+    # Soleil avec un léger halo
+    d = np.hypot(x - w * 0.62, y - h * 0.5)
+    halo = np.clip(1 - d / (h * 0.45), 0, 1)[..., None] ** 2
+    img = img + halo * np.array([90, 50, 10])
+    img = np.where((d < h * 0.15)[..., None], np.array([255, 214, 150]), img)
+    # Deux chaînes de montagnes
+    for hauteur, amp, freq, teinte in ((0.58, 0.10, 0.021, (70, 34, 82)), (0.66, 0.07, 0.035, (32, 18, 48))):
+        crete = h * (hauteur - amp * (np.sin(x[0] * freq) * 0.6 + np.sin(x[0] * freq * 2.7 + 1) * 0.4))
+        img = np.where((y > crete)[..., None], np.array(teinte), img)
+    # La mer, qui reflète le ciel en bandes
+    mer = y > h * 0.74
+    reflet = (np.sin(y * 0.9) > 0.2) & (np.abs(x - w * 0.62) < h * 0.12 * (1 + (y - h * 0.74) / h))
+    img = np.where(mer[..., None], np.array([20, 24, 60]) + v[..., None] * 30, img)
+    img = np.where((mer & reflet)[..., None], np.array([255, 170, 120]), img)
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
+def dessiner_crabe(p, x, y, taille, couleur=None, oeil=QColor(t.TEXTE)):
+    """Dessine la mascotte. Sans couleur précise, la carapace prend le dégradé signature."""
+    largeur = len(CRABE[0])
     for j, ligne in enumerate(CRABE):
         for i, c in enumerate(ligne):
             if c != ".":
+                teinte = couleur if couleur is not None else t.couleur_degrade(i / (largeur - 1))
                 p.fillRect(QRectF(x + i * taille, y + j * taille, taille - 0.5, taille - 0.5),
-                           oeil if c == "O" else couleur)
+                           oeil if c == "O" else teinte)
 
 
-def pixmap_crabe(taille):
-    pix = QPixmap(len(CRABE[0]) * taille, len(CRABE) * taille)
+def pixmap_crabe(taille, couleur=None):
+    echelle = 2
+    pix = QPixmap(len(CRABE[0]) * taille * echelle, len(CRABE) * taille * echelle)
     pix.fill(Qt.GlobalColor.transparent)
     p = QPainter(pix)
-    dessiner_crabe(p, 0, 0, taille, QColor(ACCENT))
+    dessiner_crabe(p, 0, 0, taille * echelle, couleur)
     p.end()
+    pix.setDevicePixelRatio(echelle)
     return pix
+
+
+def reglages_vignette(style, largeur_source):
+    """Réglages d'un style pour une miniature : les tailles de pixels et de motifs sont
+    réduites dans la même proportion que l'image, pour que la vignette ressemble au résultat."""
+    r = {**moteur.REGLAGES_DEFAUT, **style}
+    r["palette"] = list(moteur.PALETTES.get(style.get("palette_nom"), moteur.PALETTES["Noir & blanc"]))
+    k = Vignette.LARGEUR * 2 / max(1, min(largeur_source, 900))
+    r["taille_pixel"] = max(1, round(r["taille_pixel"] * k))
+    r["taille_motif"] = max(2, round(r["taille_motif"] * k))
+    return r
+
+
+def recadrer(src, w, h):
+    """Recadre au centre au format w:h puis réduit : la miniature est toujours pleine."""
+    sh, sw, _ = src.shape
+    if sw / sh > w / h:
+        nw = int(sh * w / h)
+        x0 = (sw - nw) // 2
+        src = src[:, x0:x0 + nw]
+    else:
+        nh = int(sw * h / w)
+        y0 = (sh - nh) // 2
+        src = src[y0:y0 + nh]
+    return np.asarray(Image.fromarray(np.ascontiguousarray(src)).resize((w, h), Image.Resampling.BOX))
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +227,7 @@ def pixmap_crabe(taille):
 
 class Vue(QWidget):
     fichierDepose = Signal(str)
+    RAYON = 18
 
     def __init__(self):
         super().__init__()
@@ -277,8 +245,10 @@ class Vue(QWidget):
         self.astuce = random.choice(ASTUCES)
         self._message = ""
         self._fin_message = 0
+        self._zone_message = QRectF()
         self._minuteur_message = QTimer(self, interval=40)
         self._minuteur_message.timeout.connect(self._tic_message)
+        self._reduites = {}       # images déjà réduites à la taille d'affichage (voir _a_afficher)
 
     def definir(self, image, originale=None):
         self.image = QPixmap.fromImage(vers_qimage(image)) if image is not None else None
@@ -297,13 +267,16 @@ class Vue(QWidget):
         if time.time() > self._fin_message + 0.4:
             self._message = ""
             self._minuteur_message.stop()
-        self.update()
+            self.update()
+            return
+        # Seule la bulle est redessinée pendant son fondu, pas toute l'image
+        self.update(self._zone_message.toAlignedRect().adjusted(-2, -2, 2, 2))
 
     def echelle(self):
         if self.image is None:
             return 1
         if self.zoom is None:
-            m = 28
+            m = 40
             return min((self.width() - m * 2) / self.image.width(),
                        (self.height() - m * 2) / self.image.height())
         return self.zoom
@@ -321,99 +294,179 @@ class Vue(QWidget):
         return QRectF((self.width() - w) / 2 + self.decalage.x(),
                       (self.height() - h) / 2 + self.decalage.y(), w, h)
 
+    def _a_afficher(self, role, pix, cible):
+        """En réduction, l'image lissée est calculée une seule fois par taille puis gardée :
+        déplacer le séparateur ou afficher une bulle ne relance pas un redimensionnement."""
+        if self.echelle() >= 1:
+            return pix
+        dpr = self.devicePixelRatioF()
+        w, h = max(1, round(cible.width() * dpr)), max(1, round(cible.height() * dpr))
+        cle = (pix.cacheKey(), w, h)
+        deja = self._reduites.get(role)
+        if deja is None or deja[0] != cle:
+            reduite = pix.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                 Qt.TransformationMode.SmoothTransformation)
+            deja = (cle, reduite)
+            self._reduites[role] = deja
+        return deja[1]
+
     def paintEvent(self, _):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(FOND))
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        carte = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        contour = QPainterPath()
+        contour.addRoundedRect(carte, self.RAYON, self.RAYON)
+        p.fillRect(self.rect(), QColor(t.FOND))
+        p.fillPath(contour, t.texture_trame())
+        p.save()
+        p.setClipPath(contour)
         if self.image is None:
             self._etat_vide(p)
         else:
             cible = self._cible()
-            # Pixels nets quand on agrandit, lissage quand on réduit
-            p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, self.echelle() < 1)
-            p.drawPixmap(cible, self.image, QRectF(self.image.rect()))
+            img = self._a_afficher("image", self.image, cible)
+            p.drawPixmap(cible, img, QRectF(img.rect()))
+            self._reperes(p, cible)
             if self.comparer and self.originale is not None:
                 self._comparaison(p, cible)
         if self._survol:
             self._cadre_depot(p)
         if self._message:
             self._bulle(p)
+        p.restore()
+        p.setPen(QPen(QColor(t.BORD), 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(contour)
+
+    def _reperes(self, p, cible):
+        """Traits de coupe aux quatre coins, comme sur une épreuve d'imprimerie."""
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        p.setPen(QPen(QColor(t.TRES_DISCRET), 1))
+        ecart, long_ = 6, 12
+        for x, sx in ((cible.left(), -1), (cible.right(), 1)):
+            for y, sy in ((cible.top(), -1), (cible.bottom(), 1)):
+                p.drawLine(QPointF(x + sx * ecart, y), QPointF(x + sx * (ecart + long_), y))
+                p.drawLine(QPointF(x, y + sy * ecart), QPointF(x, y + sy * (ecart + long_)))
+        p.restore()
+
+    def _pastille(self, p, rect, texte):
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(6, 5, 8, 215))
+        p.drawRoundedRect(rect, 6, 6)
+        p.setFont(t.police_pixel(8))
+        p.setPen(QColor(t.TEXTE))
+        p.drawText(rect, Qt.AlignmentFlag.AlignCenter, texte)
 
     def _comparaison(self, p, cible):
         x = cible.left() + cible.width() * self.coupe
         p.save()
-        p.setClipRect(QRectF(cible.left(), cible.top(), x - cible.left(), cible.height()))
-        p.drawPixmap(cible, self.originale, QRectF(self.originale.rect()))
+        p.setClipRect(QRectF(cible.left(), cible.top(), x - cible.left(), cible.height()), Qt.ClipOperation.IntersectClip)
+        img = self._a_afficher("originale", self.originale, cible)
+        p.drawPixmap(cible, img, QRectF(img.rect()))
         p.restore()
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(QPen(QColor(TEXTE), 1.5))
+        p.setPen(QPen(QColor(t.TEXTE), 1.5))
         p.drawLine(QPointF(x, max(0, cible.top())), QPointF(x, min(self.height(), cible.bottom())))
         cy = self.height() / 2
-        p.setBrush(QColor(ACCENT))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(QPointF(x, cy), 13, 13)
-        p.setPen(QColor("#1a0904"))
-        p.drawText(QRectF(x - 13, cy - 13, 26, 26), Qt.AlignmentFlag.AlignCenter, "‹ ›")
-        for texte, gauche in (("AVANT", True), ("APRÈS", False)):
-            r = QRectF(0, max(12, cible.top() + 12), 62, 22)
-            r.moveLeft(max(12, cible.left() + 12) if gauche
-                       else min(self.width(), cible.right()) - 74)
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(6, 6, 7, 200))
-            p.drawRoundedRect(r, 6, 6)
-            p.setPen(QColor(TEXTE))
-            p.drawText(r, Qt.AlignmentFlag.AlignCenter, texte)
+        poignee = QRectF(x - 13, cy - 22, 26, 44)
+        p.setPen(QPen(QColor(255, 255, 255, 90), 1))
+        p.setBrush(t.degrade(poignee))
+        p.drawRoundedRect(poignee, 13, 13)
+        for sens in (-1, 1):
+            pix = t.pixmap_icone("gauche" if sens < 0 else "droite", t.ENCRE, 12, 2.4)
+            p.drawPixmap(QPointF(x + sens * 4 - 6, cy - 6), pix)
+        haut = max(14, cible.top() + 14)
+        self._pastille(p, QRectF(max(14, cible.left() + 14), haut, 64, 22), "AVANT")
+        self._pastille(p, QRectF(min(self.width(), cible.right()) - 78, haut, 64, 22), "APRÈS")
 
     def _bulle(self, p):
         reste = self._fin_message - time.time()
         alpha = max(0.0, min(1.0, (reste + 0.4) / 0.4))
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        f = QFont(p.font())
-        f.setPointSize(12)
+        f = QFont()
+        f.setPixelSize(13)
         p.setFont(f)
-        largeur = p.fontMetrics().horizontalAdvance(self._message) + 36
-        r = QRectF((self.width() - largeur) / 2, self.height() - 58, largeur, 34)
+        largeur = p.fontMetrics().horizontalAdvance(self._message) + 66
+        r = QRectF((self.width() - largeur) / 2, self.height() - 64, largeur, 38)
+        self._zone_message = r
         p.setOpacity(alpha)
-        p.setPen(QPen(QColor(BORD), 1))
-        p.setBrush(QColor(18, 18, 21, 240))
-        p.drawRoundedRect(r, 17, 17)
-        p.setPen(QColor(TEXTE))
-        p.drawText(r, Qt.AlignmentFlag.AlignCenter, self._message)
+        p.setPen(QPen(QColor(t.BORD_FORT), 1))
+        p.setBrush(QColor(14, 12, 18, 240))
+        p.drawRoundedRect(r, 19, 19)
+        crabe = pixmap_crabe(1)
+        p.drawPixmap(QPointF(r.left() + 16, r.center().y() - crabe.height() / crabe.devicePixelRatio() / 2), crabe)
+        p.setPen(QColor(t.TEXTE))
+        p.drawText(r.adjusted(40, 0, -16, 0), Qt.AlignmentFlag.AlignVCenter, self._message)
         p.setOpacity(1)
 
     def _cadre_depot(self, p):
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(QPen(QColor(ACCENT), 2, Qt.PenStyle.DashLine))
-        p.setBrush(QColor(255, 91, 58, 16))
-        p.drawRoundedRect(QRectF(self.rect()).adjusted(16, 16, -16, -16), 18, 18)
+        r = QRectF(self.rect()).adjusted(18, 18, -18, -18)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 79, 98, 22))
+        p.drawRoundedRect(r, 14, 14)
+        stylo = QPen(t.degrade(r), 2, Qt.PenStyle.DashLine)
+        p.setPen(stylo)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(r, 14, 14)
+        p.setFont(t.police_pixel(24))
+        p.setPen(QColor(t.TEXTE))
+        p.drawText(r, Qt.AlignmentFlag.AlignCenter, "DÉPOSE ICI")
+
+    def _touche(self, p, x, y, texte, legende, dessiner=True):
+        """Petite touche de clavier dessinée, suivie de sa légende. Renvoie la largeur totale."""
+        p.setFont(t.police_mono(11, gras=True))
+        lt = p.fontMetrics().horizontalAdvance(texte) + 14
+        legende_police = QFont()
+        legende_police.setPixelSize(12)
+        ll = QFontMetricsF(legende_police).horizontalAdvance(legende)
+        if not dessiner:
+            return lt + 8 + ll
+        r = QRectF(x, y, lt, 22)
+        p.setPen(QPen(QColor(t.BORD_FORT), 1))
+        p.setBrush(QColor(t.CHAMP))
+        p.drawRoundedRect(r, 6, 6)
+        p.setPen(QColor(t.TEXTE))
+        p.drawText(r, Qt.AlignmentFlag.AlignCenter, texte)
+        p.setFont(legende_police)
+        p.setPen(QColor(t.DISCRET))
+        p.drawText(QRectF(x + lt + 8, y, ll + 2, 22), Qt.AlignmentFlag.AlignVCenter, legende)
+        return lt + 8 + ll
 
     def _etat_vide(self, p):
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
         c = QRectF(self.rect()).center()
-        taille = 9
+        taille = 10
         lw, lh = len(CRABE[0]) * taille, len(CRABE) * taille
-        dessiner_crabe(p, c.x() - lw / 2, c.y() - lh - 40, taille,
-                       QColor(ACCENT) if self._survol else QColor("#7a2b1c"))
+        # Le crabe, posé sur une petite ombre portée tramée
+        p.setPen(Qt.PenStyle.NoPen)
+        for i in range(9):
+            p.setBrush(QColor(255, 79, 98, 10 + i * 3))
+            p.drawEllipse(QPointF(c.x(), c.y() - 42), lw * 0.55 - i * 5, 9 - i)
+        dessiner_crabe(p, c.x() - lw / 2, c.y() - lh - 56, taille,
+                       QColor(t.ACCENT) if self._survol else None)
         heure = time.localtime().tm_hour
-        salut = "Bonjour" if 5 <= heure < 18 else "Bonsoir"
-        p.setPen(QColor(TEXTE))
-        f = QFont(TITRES)
-        f.setPointSize(22)
-        f.setWeight(QFont.Weight.DemiBold)
+        salut = "BONJOUR !" if 5 <= heure < 18 else "BONSOIR !"
+        p.setFont(t.police_pixel(32))
+        p.setPen(QColor(t.TEXTE))
+        p.drawText(QRectF(0, c.y() - 22, self.width(), 40), Qt.AlignmentFlag.AlignCenter, salut)
+        f = QFont()
+        f.setPixelSize(14)
         p.setFont(f)
-        p.drawText(QRectF(0, c.y() - 22, self.width(), 34), Qt.AlignmentFlag.AlignCenter,
-                   f"{salut} !")
-        f.setPointSize(13)
-        f.setWeight(QFont.Weight.Normal)
+        p.setPen(QColor(t.DISCRET))
+        p.drawText(QRectF(0, c.y() + 22, self.width(), 24), Qt.AlignmentFlag.AlignCenter,
+                   "Balance une image, un GIF ou une vidéo dans cette zone.")
+        # Les deux gestes possibles, sous forme de touches
+        essai = [(f"{CMD}O", "ouvrir un fichier"), ("C", "comparer avant / après")]
+        largeur = sum(self._touche(p, 0, 0, a, b, dessiner=False) for a, b in essai) + 28
+        x = c.x() - largeur / 2
+        for a, b in essai:
+            x += self._touche(p, x, c.y() + 62, a, b) + 28
+        p.setFont(t.police_pixel(8))
+        p.setPen(QColor(t.TRES_DISCRET))
+        p.drawText(QRectF(0, self.height() - 46, self.width(), 14), Qt.AlignmentFlag.AlignCenter,
+                   "ASTUCE")
+        f.setPixelSize(12)
         p.setFont(f)
-        p.setPen(QColor(DISCRET))
-        p.drawText(QRectF(0, c.y() + 16, self.width(), 24), Qt.AlignmentFlag.AlignCenter,
-                   f"Balance une image ou une vidéo ici, ou fais {CMD}O.")
-        f.setPointSize(11)
-        f.setItalic(True)
-        p.setFont(f)
-        p.setPen(QColor(TRES_DISCRET))
-        p.drawText(QRectF(0, self.height() - 54, self.width(), 20), Qt.AlignmentFlag.AlignCenter,
-                   "Petite astuce : " + self.astuce)
+        p.drawText(QRectF(0, self.height() - 30, self.width(), 18), Qt.AlignmentFlag.AlignCenter,
+                   self.astuce[0].upper() + self.astuce[1:])
 
     # --- Navigation : glisser pour déplacer (ou bouger le séparateur), pincer pour zoomer
     def mousePressEvent(self, e):
@@ -485,216 +538,46 @@ class Vue(QWidget):
             self.fichierDepose.emit(urls[0].toLocalFile())
 
 
-# ---------------------------------------------------------------------------
-# Composants du panneau de réglages
-# ---------------------------------------------------------------------------
-
-class Curseur(QWidget):
-    change = Signal()
-
-    def __init__(self, nom, mini, maxi, defaut, suffixe="", aide=""):
-        super().__init__()
-        self.defaut = defaut
-        self.suffixe = suffixe
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(16, 3, 16, 3)
-        lay.setSpacing(3)
-        self.haut = QHBoxLayout()
-        self.etiquette = QLabel(nom)
-        self.etiquette.setToolTip((aide + "\n\n" if aide else "") + "Double-clic pour revenir à la valeur de départ")
-        self.val = QLabel()
-        self.val.setObjectName("valeur")
-        self.haut.addWidget(self.etiquette)
-        self.haut.addStretch()
-        self.haut.addWidget(self.val)
-        self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(mini, maxi)
-        self.slider.setValue(defaut)
-        self.slider.valueChanged.connect(self._maj)
-        lay.addLayout(self.haut)
-        lay.addWidget(self.slider)
-        self._maj()
-
-    def _maj(self):
-        v = self.slider.value()
-        self.val.setText(f"{v}{self.suffixe}")
-        # Les valeurs modifiées sont légèrement mises en avant
-        self.val.setStyleSheet(f"color: {ACCENT_CLAIR if v != self.defaut else DISCRET};")
-        self.change.emit()
-
-    def mouseDoubleClickEvent(self, _):
-        self.slider.setValue(self.defaut)
-
-    def valeur(self):
-        return self.slider.value()
-
-    def definir(self, v):
-        self.slider.setValue(int(v))
-
-
-class Interrupteur(QWidget):
-    change = Signal()
-
-    def __init__(self, nom, defaut, aide=""):
-        super().__init__()
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(16, 5, 16, 5)
-        self.case = QCheckBox()
-        self.case.setChecked(defaut)
-        self.case.toggled.connect(lambda _: self.change.emit())
-        etiquette = QLabel(nom)
-        etiquette.setToolTip(aide)
-        lay.addWidget(etiquette)
-        lay.addStretch()
-        lay.addWidget(self.case)
-
-    def valeur(self):
-        return self.case.isChecked()
-
-    def definir(self, v):
-        self.case.setChecked(bool(v))
-
-
-class Liste(QWidget):
-    change = Signal()
-
-    def __init__(self, nom, choix, aide=""):
-        super().__init__()
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(16, 4, 16, 5)
-        lay.setSpacing(5)
-        if nom:
-            e = QLabel(nom)
-            e.setToolTip(aide)
-            lay.addWidget(e)
-        self.combo = QComboBox()
-        self.combo.addItems(choix)
-        self.combo.setMaxVisibleItems(25)
-        self.combo.currentTextChanged.connect(lambda _: self.change.emit())
-        lay.addWidget(self.combo)
-
-    def valeur(self):
-        return self.combo.currentText()
-
-    def definir(self, v):
-        self.combo.setCurrentText(v)
-
-
-class Section(QWidget):
-    """Bloc repliable : un titre, une phrase d'explication, et un bouton pour tout remettre à zéro."""
-
-    def __init__(self, titre, sous_titre, ouvert=False, reinit=None):
-        super().__init__()
-        self.titre = titre
-        self.cles = []
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 6)
-        lay.setSpacing(0)
-        sep = QFrame()
-        sep.setObjectName("separateur")
-        lay.addWidget(sep)
-        tete = QHBoxLayout()
-        tete.setSpacing(0)
-        self.bouton = QPushButton()
-        self.bouton.setObjectName("section")
-        self.bouton.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.bouton.clicked.connect(self.basculer)
-        tete.addWidget(self.bouton, 1)
-        if reinit:
-            b = QPushButton("↺")
-            b.setObjectName("reinit")
-            b.setToolTip("Remettre cette section à zéro")
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.clicked.connect(lambda: reinit(self))
-            tete.addWidget(b)
-        lay.addLayout(tete)
-        self.corps = QWidget()
-        self.corps_lay = QVBoxLayout(self.corps)
-        self.corps_lay.setContentsMargins(0, 0, 0, 4)
-        self.corps_lay.setSpacing(1)
-        st = QLabel(sous_titre)
-        st.setObjectName("sousTitre")
-        self.corps_lay.addWidget(st)
-        lay.addWidget(self.corps)
-        self.corps.setVisible(ouvert)
-        self.modifiee = False
-        self._titre()
-
-    def _titre(self):
-        fleche = "▾" if self.corps.isVisible() else "▸"
-        point = "  •" if self.modifiee else ""
-        self.bouton.setText(f"{fleche}  {self.titre}{point}")
-        self.bouton.setStyleSheet(f"color: {ACCENT_CLAIR};" if self.modifiee and
-                                  not self.corps.isVisible() else "")
-
-    def marquer(self, modifiee):
-        if modifiee != self.modifiee:
-            self.modifiee = modifiee
-            self._titre()
-
-    def basculer(self):
-        self.corps.setVisible(not self.corps.isVisible())
-        self._titre()
-
-    def ajouter(self, w, cle=None):
-        self.corps_lay.addWidget(w)
-        if cle:
-            self.cles.append(cle)
-        return w
-
-
-class Nuancier(QWidget):
-    """Affiche les couleurs de la palette ; clic = modifier, clic droit = supprimer."""
-    modifie = Signal(list)
+class BarreEtat(QWidget):
+    """Bandeau d'état sous l'aperçu : voyant (prêt / calcul), dimensions, palette, temps de rendu."""
 
     def __init__(self):
         super().__init__()
+        self.texte = ""
         self.couleurs = []
-        self.grille = QGridLayout(self)
-        self.grille.setContentsMargins(16, 6, 16, 6)
-        self.grille.setSpacing(6)
+        self.calcul = False
+        self.setMinimumWidth(120)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
-    def definir(self, couleurs):
-        self.couleurs = list(couleurs)
-        while self.grille.count():
-            w = self.grille.takeAt(0).widget()
-            w.hide()
-            w.deleteLater()
-        par_ligne = 8
-        for i, c in enumerate(self.couleurs + ["+"]):
-            b = QPushButton("+" if c == "+" else "")
-            b.setFixedSize(28, 28)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            if c == "+":
-                b.setToolTip("Ajouter une couleur")
-                b.setStyleSheet(f"border-radius: 14px; border: 1px dashed #3a3530; padding: 0;"
-                                f"background: transparent; color: {DISCRET}; font-size: 16px;")
-                b.clicked.connect(self._ajouter)
-                b.setEnabled(len(self.couleurs) < 64)
-            else:
-                b.setToolTip(f"{c}\nClic : modifier · Clic droit : supprimer")
-                b.setStyleSheet(f"background: {c}; border-radius: 14px;"
-                                "border: 1px solid rgba(255,255,255,30);")
-                b.clicked.connect(lambda _=False, i=i: self._editer(i))
-                b.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-                b.customContextMenuRequested.connect(lambda _p, i=i: self._supprimer(i))
-            self.grille.addWidget(b, i // par_ligne, i % par_ligne)
-        self.grille.setColumnStretch(par_ligne, 1)
+    def definir(self, texte=None, couleurs=None, calcul=None):
+        if texte is not None:
+            self.texte = texte
+        if couleurs is not None:
+            self.couleurs = list(couleurs)[:32]
+        if calcul is not None:
+            self.calcul = calcul
+        self.update()
 
-    def _editer(self, i):
-        c = QColorDialog.getColor(QColor(self.couleurs[i]), self, "Couleur")
-        if c.isValid():
-            self.couleurs[i] = c.name()
-            self.modifie.emit(self.couleurs)
-
-    def _ajouter(self):
-        c = QColorDialog.getColor(QColor("#ffffff"), self, "Nouvelle couleur")
-        if c.isValid():
-            self.modifie.emit(self.couleurs + [c.name()])
-
-    def _supprimer(self, i):
-        if len(self.couleurs) > 2:
-            self.modifie.emit(self.couleurs[:i] + self.couleurs[i + 1:])
+    def paintEvent(self, _):
+        if not self.texte:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        cy = self.height() / 2
+        x = self.width()
+        # La palette, en petits carrés, collée à droite
+        cote, ecart = 8, 2
+        for c in reversed(self.couleurs):
+            x -= cote
+            p.fillRect(QRectF(x, cy - cote / 2, cote, cote), QColor(c))
+            x -= ecart
+        x -= 12
+        p.setFont(t.police_mono(11))
+        largeur = p.fontMetrics().horizontalAdvance(self.texte)
+        x -= largeur
+        p.setPen(QColor(t.DISCRET))
+        p.drawText(QRectF(x, 0, largeur + 2, self.height()), Qt.AlignmentFlag.AlignVCenter, self.texte)
+        t.point_lumineux(p, QPointF(x - 12, cy), 3, t.AMBRE if self.calcul else t.VERT)
 
 
 # ---------------------------------------------------------------------------
@@ -852,6 +735,44 @@ class Export(QThread):
                 lecteur.fermer()
 
 
+
+class Miniatures(QObject):
+    """Calcule les vignettes de la galerie sur un fil à part, une à une.
+
+    Chaque nouvelle demande (nouvelle image) invalide la précédente : les vignettes
+    d'une image qu'on vient de remplacer ne sont jamais affichées.
+    """
+    prete = Signal(int, str, QImage)
+
+    def __init__(self):
+        super().__init__()
+        self._pool = ThreadPoolExecutor(1, thread_name_prefix="miniatures")
+        self._generation = 0
+
+    def calculer(self, src):
+        self._generation += 1
+        self._pool.submit(self._travail, self._generation, src)
+
+    def _travail(self, generation, src):
+        try:
+            petite = recadrer(src, Vignette.LARGEUR * 2, Vignette.HAUTEUR * 2)
+            for nom, style in STYLES.items():
+                if generation != self._generation:
+                    return  # une image plus récente est arrivée
+                out = moteur.traiter(petite, reglages_vignette(style, src.shape[1]), 0,
+                                     parallele=False)
+                self.prete.emit(generation, nom, vers_qimage(out))
+        except Exception as ex:  # une vignette ratée ne doit jamais gêner l'app
+            print("Erreur de miniature :", ex, file=sys.stderr)
+
+    def generation(self):
+        return self._generation
+
+    def arreter(self):
+        self._generation += 1
+        self._pool.shutdown(wait=False, cancel_futures=True)
+
+
 # ---------------------------------------------------------------------------
 # Fenêtre principale
 # ---------------------------------------------------------------------------
@@ -860,8 +781,8 @@ class Fenetre(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(NOM)
-        self.resize(1400, 880)
-        self.setMinimumSize(1000, 640)
+        self.resize(1440, 900)
+        self.setMinimumSize(1080, 680)
         self.prefs = QSettings("CrunchCrab", "CrunchCrab")
 
         self.src = None          # image source affichée (ou frame courante)
@@ -872,7 +793,9 @@ class Fenetre(QMainWindow):
         self.palette_auto = list(moteur.PALETTES["Noir & blanc"])
         self.lecture = None
         self._reglages_courants = {}
+        self._derniere_demande = None
         self._bloquer = False
+        self._style_actif = None  # (nom, état) du dernier style de la galerie appliqué
         self.historique = []
         self.pos_historique = -1
 
@@ -883,6 +806,8 @@ class Fenetre(QMainWindow):
         self.minuteur.timeout.connect(self._lancer_rendu)
         self.minuteur_histo = QTimer(singleShot=True, interval=450)
         self.minuteur_histo.timeout.connect(self._memoriser)
+        self.miniatures = Miniatures()
+        self.miniatures.prete.connect(self._miniature_prete)
 
         self._construire()
         self._menus()
@@ -892,81 +817,81 @@ class Fenetre(QMainWindow):
         except Exception:
             self._appliquer_reglages({})
         self._memoriser()
+        self.miniatures.calculer(scene_exemple())
         QTimer.singleShot(0, lambda: threading.Thread(target=moteur.prechauffer,
                                                       daemon=True).start())
 
     # ----- Construction de l'interface
+    def _bouton(self, texte, nom_icone=None, objet=None, bulle=None, couleur=t.TEXTE):
+        b = QPushButton(texte)
+        if nom_icone:
+            b.setIcon(t.icone(nom_icone, couleur, 16))
+        if objet:
+            b.setObjectName(objet)
+        if bulle:
+            b.setToolTip(bulle)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        return b
+
     def _construire(self):
         racine = QWidget()
         racine.setObjectName("racine")
         self.setCentralWidget(racine)
         h = QHBoxLayout(racine)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(0)
+        h.setContentsMargins(12, 10, 12, 12)
+        h.setSpacing(12)
 
         gauche = QVBoxLayout()
-        gauche.setSpacing(0)
-        barre = QWidget()
-        barre.setObjectName("barre")
-        bl = QHBoxLayout(barre)
-        bl.setContentsMargins(18, 10, 14, 10)
-        bl.setSpacing(8)
+        gauche.setSpacing(10)
+
+        # Barre du haut : marque, fichier, historique… et les deux gros boutons
+        barre = QHBoxLayout()
+        barre.setContentsMargins(6, 0, 0, 0)
+        barre.setSpacing(8)
         logo = QLabel()
         logo.setPixmap(pixmap_crabe(2))
-        bl.addWidget(logo)
-        marque = QLabel(NOM)
+        barre.addWidget(logo)
+        barre.addSpacing(4)
+        marque = QLabel(NOM.upper())
         marque.setObjectName("marque")
-        bl.addWidget(marque)
-        bl.addSpacing(16)
-        b_ouvrir = QPushButton("Ouvrir…")
+        barre.addWidget(marque)
+        version = QLabel(f"V{VERSION}")
+        version.setObjectName("version")
+        barre.addWidget(version)
+        barre.addSpacing(18)
+        b_ouvrir = self._bouton("Ouvrir", "ouvrir", bulle=f"Ouvrir une image ou une vidéo ({CMD}O)")
         b_ouvrir.clicked.connect(self.ouvrir)
-        bl.addWidget(b_ouvrir)
-        self.b_annuler = QPushButton("↩")
-        self.b_annuler.setObjectName("icone")
-        self.b_annuler.setToolTip(f"Annuler ({CMD}Z)")
+        barre.addWidget(b_ouvrir)
+        self.b_annuler = self._bouton("", "annuler", "icone", f"Annuler ({CMD}Z)")
         self.b_annuler.clicked.connect(self.annuler)
-        self.b_retablir = QPushButton("↪")
-        self.b_retablir.setObjectName("icone")
-        self.b_retablir.setToolTip(f"Rétablir ({MAJ_CMD}Z)")
+        self.b_retablir = self._bouton("", "retablir", "icone", f"Rétablir ({MAJ_CMD}Z)")
         self.b_retablir.clicked.connect(self.retablir)
-        bl.addWidget(self.b_annuler)
-        bl.addWidget(self.b_retablir)
-        bl.addStretch()
-        b_hasard = QPushButton("🎲  Surprends-moi")
-        b_hasard.setToolTip("Je te propose un look au pif (R)")
+        barre.addWidget(self.b_annuler)
+        barre.addWidget(self.b_retablir)
+        barre.addStretch()
+        b_hasard = self._bouton("Surprends-moi", "de", bulle="Un look tiré au hasard (R)")
         b_hasard.clicked.connect(self.surprendre)
-        bl.addWidget(b_hasard)
-        self.styles = QComboBox()
-        self.styles.addItems(["Styles tout prêts"] + list(STYLES))
-        self.styles.setMinimumWidth(190)
-        self.styles.activated.connect(self._appliquer_style)
-        bl.addWidget(self.styles)
-        self.b_exporter = QPushButton("Exporter")
-        self.b_exporter.setObjectName("principal")
+        barre.addWidget(b_hasard)
+        self.b_exporter = self._bouton("Exporter", "exporter", "principal", f"Exporter ({CMD}E)",
+                                       couleur=t.ENCRE)
         self.b_exporter.setEnabled(False)
         self.b_exporter.clicked.connect(self.exporter)
-        bl.addWidget(self.b_exporter)
-        gauche.addWidget(barre)
-        sep = QFrame()
-        sep.setObjectName("separateur")
-        gauche.addWidget(sep)
+        barre.addWidget(self.b_exporter)
+        gauche.addLayout(barre)
 
         self.vue = Vue()
         self.vue.fichierDepose.connect(self.charger)
         self.vue.zoomChange = self._maj_boutons_zoom
         gauche.addWidget(self.vue, 1)
 
-        sep2 = QFrame()
-        sep2.setObjectName("separateur")
-        gauche.addWidget(sep2)
+        # Barre du bas : lecture vidéo, état, zoom, comparaison
         transport = QWidget()
-        transport.setObjectName("transport")
+        transport.setObjectName("carte")
+        transport.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
         tl = QHBoxLayout(transport)
-        tl.setContentsMargins(14, 8, 14, 8)
+        tl.setContentsMargins(10, 8, 10, 8)
         tl.setSpacing(10)
-        self.b_lecture = QPushButton("▶")
-        self.b_lecture.setObjectName("lecture")
-        self.b_lecture.setToolTip("Lecture / pause (Espace)")
+        self.b_lecture = self._bouton("", "lecture", "lecture", "Lecture / pause (Espace)", t.ENCRE)
         self.b_lecture.clicked.connect(self.basculer_lecture)
         self.timeline = QSlider(Qt.Orientation.Horizontal)
         self.timeline.valueChanged.connect(self._timeline_bouge)
@@ -976,43 +901,47 @@ class Fenetre(QMainWindow):
         for w in self.zone_video:
             tl.addWidget(w, 1 if w is self.timeline else 0)
             w.setVisible(False)
-        self.ressort = QWidget()  # pousse les infos à droite quand il n'y a pas de vidéo
-        self.ressort.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        tl.addWidget(self.ressort)
-        self.info = QLabel("")
-        self.info.setObjectName("info")
-        tl.addWidget(self.info)
-        tl.addSpacing(8)
+        self.etat = BarreEtat()
+        tl.addWidget(self.etat, 1)
+        tl.addSpacing(6)
+        groupe = QWidget()
+        groupe.setObjectName("groupe")
+        groupe.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        gl = QHBoxLayout(groupe)
+        gl.setContentsMargins(3, 3, 3, 3)
+        gl.setSpacing(2)
         self.boutons_zoom = {}
         for nom, z in (("Ajuster", None), ("1×", 1.0), ("2×", 2.0), ("4×", 4.0)):
-            b = QPushButton(nom)
-            b.setObjectName("segment")
+            b = self._bouton(nom, objet="segment")
             b.setCheckable(True)
             b.clicked.connect(lambda _=False, z=z: self.vue.definir_zoom(z))
             self.boutons_zoom[z] = b
-            tl.addWidget(b)
-        self.b_comparer = QPushButton("Avant / après")
-        self.b_comparer.setObjectName("bascule")
+            gl.addWidget(b)
+        tl.addWidget(groupe)
+        self.b_comparer = self._bouton("Avant / après", "comparer", "bascule",
+                                       "Glisse le séparateur pour comparer (C)")
         self.b_comparer.setCheckable(True)
-        self.b_comparer.setToolTip("Glisse le séparateur pour comparer (C)")
         self.b_comparer.toggled.connect(self._comparer)
-        tl.addSpacing(6)
         tl.addWidget(self.b_comparer)
         gauche.addWidget(transport)
         self._maj_boutons_zoom()
 
         h.addLayout(gauche, 1)
-        sepv = QFrame()
-        sepv.setObjectName("separateurV")
-        h.addWidget(sepv)
         h.addWidget(self._panneau())
 
     def _panneau(self):
+        carte = QWidget()
+        carte.setObjectName("carte")
+        carte.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        carte.setFixedWidth(356)
+        cl = QVBoxLayout(carte)
+        cl.setContentsMargins(0, 6, 0, 6)
         defile = QScrollArea()
         defile.setObjectName("defile")
         defile.setWidgetResizable(True)
-        defile.setFixedWidth(340)
+        defile.setFrameShape(QScrollArea.Shape.NoFrame)
         defile.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        cl.addWidget(defile)
         interieur = QWidget()
         interieur.setObjectName("panneauInterieur")
         lay = QVBoxLayout(interieur)
@@ -1020,10 +949,12 @@ class Fenetre(QMainWindow):
         lay.setSpacing(0)
         self.c = {}         # tous les contrôles, par nom de réglage
         self.sections = []
+        Section._compteur = 0
 
-        def section(titre, sous_titre, ouvert=False):
-            s = Section(titre, sous_titre, ouvert, self._reinit_section)
-            self.sections.append(s)
+        def section(titre, sous_titre, ouvert=False, reinit=True):
+            s = Section(titre, sous_titre, ouvert, self._reinit_section if reinit else None)
+            if reinit:
+                self.sections.append(s)
             lay.addWidget(s)
             return s
 
@@ -1032,125 +963,158 @@ class Fenetre(QMainWindow):
             widget.change.connect(self._modifie)
             return widget
 
+        s = section("Styles", "Un clic pour essayer un look complet. Les miniatures sont "
+                    "calculées sur ton image.", ouvert=True, reinit=False)
+        self.galerie = s.ajouter(Galerie(list(STYLES)))
+        self.galerie.choisi.connect(self._appliquer_style)
+
         s = section("Tramage", "La base : la façon dont les points sont posés.", ouvert=True)
-        ajout(s, "algorithme", Liste("Méthode", moteur.ALGORITHMES,
-                                     "Chaque méthode répartit les points à sa façon"))
+        ajout(s, "algorithme", Liste(
+            "Méthode", moteur.ALGORITHMES,
+            "Diffusion (Floyd, Atkinson…) : organique. Bayer : quadrillé. Trames : imprimé.",
+            fleches=True))
         self.c["algorithme"].change.connect(self._algo_change)
         ajout(s, "taille_pixel", Curseur("Taille des pixels", 1, 32, 2, " px",
-                                         "Plus c'est gros, plus ça pixelise"))
+                                         "Plus c'est gros, plus ça pixelise. 1 px garde toute la finesse."))
         ajout(s, "force", Curseur("Intensité", 0, 200, 100, " %",
-                                  "À 0 % : aplats de couleur. Au-delà de 100 % : plus de grain"))
-        ajout(s, "taille_motif", Curseur("Taille du motif", 2, 32, 6, " px"))
-        ajout(s, "angle", Curseur("Angle de la trame", 0, 90, 45, "°"))
+                                  "À 0 % : des aplats de couleur. Au-delà de 100 % : encore plus de grain.",
+                                  neutre=100))
+        ajout(s, "taille_motif", Curseur("Taille du motif", 2, 32, 6, " px",
+                                         "La taille des points ou des lignes de la trame."))
+        ajout(s, "angle", Curseur("Angle de la trame", 0, 90, 45, "°",
+                                  "L'inclinaison de la trame, comme sur une rotative de journal."))
         ajout(s, "zigzag", Interrupteur("Balayage en zigzag", True,
-                                        "Alterne le sens de chaque ligne : moins d'artefacts"))
+                                        "Alterne le sens de chaque ligne : moins de traînées."))
         ajout(s, "bruit_avant", Curseur("Bruit avant tramage", 0, 100, 0, " %",
-                                        "Casse les motifs trop réguliers, ça fait plus naturel"))
+                                        "Casse les motifs trop réguliers, ça fait plus naturel."))
 
-        s = section("Couleurs", "Choisis ta palette, c'est elle qui fait l'ambiance.", ouvert=True)
+        s = section("Couleurs", "Choisis ta palette : c'est elle qui fait l'ambiance.", ouvert=True)
         self.liste_palette = s.ajouter(Liste(None, list(moteur.PALETTES)
-                                             + [PALETTE_GRIS, PALETTE_AUTO, PALETTE_PERSO]))
+                                             + [PALETTE_GRIS, PALETTE_AUTO, PALETTE_PERSO],
+                                             "Les flèches font défiler les palettes une à une.",
+                                             fleches=True))
         self.liste_palette.change.connect(self._palette_changee)
-        self.nb_couleurs = s.ajouter(Curseur("Nombre de couleurs", 2, 32, 4))
+        self.nb_couleurs = s.ajouter(Curseur("Nombre de couleurs", 2, 32, 4, "",
+                                             "Combien de teintes garder dans la palette."))
         self.nb_couleurs.change.connect(self._palette_changee)
-        self.b_recalc = QPushButton("Recalculer depuis l'image")
+        self.b_recalc = self._bouton("Recalculer depuis l'image", "reinit")
         self.b_recalc.clicked.connect(self._recalculer_auto)
         conteneur = QWidget()
-        cl = QHBoxLayout(conteneur)
-        cl.setContentsMargins(16, 2, 16, 2)
-        cl.addWidget(self.b_recalc)
+        rl = QHBoxLayout(conteneur)
+        rl.setContentsMargins(18, 2, 18, 2)
+        rl.addWidget(self.b_recalc)
         self.recalc_conteneur = s.ajouter(conteneur)
         self.nuancier = s.ajouter(Nuancier())
         self.nuancier.modifie.connect(self._nuancier_modifie)
         ajout(s, "carte_degrade", Interrupteur(
             "Répartir sur la palette", False,
-            "Associe les zones sombres à la couleur la plus sombre, les claires à la plus claire.\n"
-            "Idéal pour les bichromies et les dégradés."))
+            "Les zones sombres prennent la couleur la plus sombre, les claires la plus claire. "
+            "Parfait pour les bichromies."))
         ajout(s, "perceptuel", Interrupteur("Couleurs perceptuelles", True,
-                                            "Compare les couleurs comme le fait l'œil humain"))
+                                            "Compare les couleurs comme le fait l'œil humain."))
         ajout(s, "lineaire", Interrupteur(
             "Lumière linéaire", False,
-            "Trame comme la lumière se mélange vraiment : vu de loin, les demi-tons\n"
-            "sont plus fidèles (l'image paraît un peu plus sombre de près)."))
+            "Mélange la lumière comme en vrai : de loin, les demi-tons sont plus fidèles."))
 
         s = section("Retouche", "Un petit coup de propre avant de tramer.")
-        ajout(s, "luminosite", Curseur("Luminosité", -100, 100, 0))
-        ajout(s, "contraste", Curseur("Contraste", -100, 100, 0))
-        ajout(s, "gamma", Curseur("Gamma", 10, 300, 100, "", "Éclaircit ou assombrit les tons moyens"))
-        ajout(s, "saturation", Curseur("Saturation", 0, 200, 100, " %"))
-        ajout(s, "teinte", Curseur("Teinte", -180, 180, 0, "°", "Fait tourner toutes les couleurs"))
+        ajout(s, "luminosite", Curseur("Luminosité", -100, 100, 0, "",
+                                       "Éclaircit ou assombrit toute l'image."))
+        ajout(s, "contraste", Curseur("Contraste", -100, 100, 0, "",
+                                      "Écarte les clairs et les sombres : le tramage en ressort plus net."))
+        ajout(s, "gamma", Curseur("Gamma", 10, 300, 100, "",
+                                  "Joue sur les tons moyens sans toucher au noir ni au blanc.", neutre=100))
+        ajout(s, "saturation", Curseur("Saturation", 0, 200, 100, " %",
+                                       "0 % : noir et blanc. 200 % : couleurs à fond.", neutre=100))
+        ajout(s, "teinte", Curseur("Teinte", -180, 180, 0, "°",
+                                   "Fait tourner toutes les couleurs sur le cercle chromatique."))
         ajout(s, "temperature", Curseur("Température", -100, 100, 0, "",
-                                        "Négatif : plus froid · Positif : plus chaud"))
-        ajout(s, "flou", Curseur("Flou", 0, 100, 0, " %"))
-        ajout(s, "nettete", Curseur("Netteté", 0, 300, 0, " %"))
+                                        "Vers le bleu à gauche, vers l'orange à droite."))
+        ajout(s, "flou", Curseur("Flou", 0, 100, 0, " %",
+                                 "Adoucit l'image avant le tramage : moins de bruit, plus d'aplats."))
+        ajout(s, "nettete", Curseur("Netteté", 0, 300, 0, " %",
+                                    "Renforce les détails fins avant le tramage."))
         ajout(s, "encrage", Curseur("Encrage des contours", 0, 100, 0, " %",
-                                    "Souligne les bords en noir, façon bande dessinée"))
-        ajout(s, "inverser", Interrupteur("Inverser (négatif)", False))
+                                    "Souligne les bords en noir, façon bande dessinée."))
+        ajout(s, "inverser", Interrupteur("Inverser (négatif)", False, "Passe l'image en négatif."))
 
         s = section("Déformations", "Pour tordre un peu tout ça.")
-        ajout(s, "miroir", Liste("Miroir", moteur.MIROIRS))
+        ajout(s, "miroir", Liste("Miroir", moteur.MIROIRS,
+                                 "Recopie une moitié de l'image sur l'autre, ou en kaléidoscope."))
         ajout(s, "ondulation", Curseur("Ondulation", 0, 100, 0, " %",
-                                       "Fait onduler l'image comme un signal perturbé"))
-        ajout(s, "frequence_onde", Curseur("Fréquence des vagues", 1, 50, 6))
+                                       "Fait onduler l'image comme un signal perturbé."))
+        ajout(s, "frequence_onde", Curseur("Fréquence des vagues", 1, 50, 6, "",
+                                           "Le nombre de vagues dans l'image."))
         ajout(s, "tri_pixels", Curseur("Tri de pixels", 0, 100, 0, " %",
-                                       "Range les pixels clairs par luminosité : longues traînées"))
-        ajout(s, "tri_direction", Liste("Direction du tri", moteur.DIRECTIONS))
-        ajout(s, "tri_inverse", Interrupteur("Tri inversé", False))
+                                       "Range les pixels par luminosité : longues traînées lumineuses."))
+        ajout(s, "tri_direction", Liste("Direction du tri", moteur.DIRECTIONS,
+                                        "Dans quel sens les pixels glissent."))
+        ajout(s, "tri_inverse", Interrupteur("Tri inversé", False,
+                                             "Fait glisser les pixels sombres plutôt que les clairs."))
 
         s = section("Glitch", "Pour tout casser… gentiment.")
-        ajout(s, "glitch", Curseur("Tranches décalées", 0, 100, 0, " %"))
+        ajout(s, "glitch", Curseur("Tranches décalées", 0, 100, 0, " %",
+                                   "Des bandes horizontales qui glissent de côté."))
         ajout(s, "blocs", Curseur("Blocs corrompus", 0, 100, 0, " %",
-                                  "Des morceaux d'image déplacés, comme une vidéo abîmée"))
-        ajout(s, "etirement", Curseur("Lignes étirées", 0, 100, 0, " %"))
+                                  "Des morceaux d'image déplacés, comme une vidéo abîmée."))
+        ajout(s, "etirement", Curseur("Lignes étirées", 0, 100, 0, " %",
+                                      "Une ligne de pixels étirée vers le bas, façon bug d'écran."))
         graine = ajout(s, "graine", Curseur("Variation", 0, 999, 1, "",
-                                            "Change la disposition du glitch"))
-        de = QPushButton("🎲")
-        de.setObjectName("de")
-        de.setToolTip("Nouvelle variation")
-        de.setCursor(Qt.CursorShape.PointingHandCursor)
+                                            "Change la disposition du glitch. Le dé en tire une au hasard."))
+        de = self._bouton("", "de", "de", "Nouvelle variation", t.DISCRET)
         de.clicked.connect(lambda: graine.definir(random.randint(0, 999)))
         graine.haut.insertWidget(2, de)
         ajout(s, "glitch_anime", Interrupteur("Glitch animé (vidéo)", True,
-                                              "Le glitch change à chaque image de la vidéo"))
+                                              "En vidéo, le glitch change à chaque image."))
 
         s = section("Optique", "Des petits défauts d'objectif, ça a du charme.")
         ajout(s, "aberration", Curseur("Aberration chromatique", 0, 100, 0, " %",
-                                       "Les couleurs se séparent vers les bords de l'image"))
-        ajout(s, "decalage_rvb", Curseur("Décalage RVB", 0, 30, 0, " px"))
-        ajout(s, "angle_rvb", Curseur("Direction du décalage", 0, 360, 0, "°"))
+                                       "Les couleurs se séparent vers les bords, comme un vieil objectif."))
+        ajout(s, "decalage_rvb", Curseur("Décalage RVB", 0, 30, 0, " px",
+                                         "Décale les canaux rouge, vert et bleu."))
+        ajout(s, "angle_rvb", Curseur("Direction du décalage", 0, 360, 0, "°",
+                                      "Dans quel sens partent les couleurs."))
         ajout(s, "bavure", Curseur("Bavure des couleurs", 0, 100, 0, " %",
-                                   "La couleur déborde, comme sur une cassette VHS"))
-        ajout(s, "lueur", Curseur("Lueur", 0, 100, 0, " %"))
+                                   "La couleur déborde, comme sur une cassette VHS."))
+        ajout(s, "lueur", Curseur("Lueur", 0, 100, 0, " %", "Les zones claires rayonnent un peu."))
         ajout(s, "fuite_lumiere", Curseur("Fuite de lumière", 0, 100, 0, " %",
-                                          "Un halo chaud, comme une pellicule voilée"))
+                                          "Un halo chaud, comme une pellicule voilée."))
 
-        s = section("Écran && texture", "Le côté vieille télé et cassette VHS.")
+        s = section("Écran & texture", "Le côté vieille télé et cassette VHS.")
         ajout(s, "jpeg", Curseur("Artefacts JPEG", 0, 100, 0, " %",
-                                 "Comme une image envoyée et renvoyée 50 fois sur WhatsApp"))
-        ajout(s, "posterisation", Curseur("Postérisation", 0, 100, 0, " %"))
+                                 "Comme une image envoyée et renvoyée 50 fois sur WhatsApp."))
+        ajout(s, "posterisation", Curseur("Postérisation", 0, 100, 0, " %",
+                                          "Réduit les nuances en paliers bien nets."))
         ajout(s, "bande_vhs", Curseur("Bande VHS", 0, 100, 0, " %",
-                                      "Une bande qui grésille et qui défile, comme sur une vieille cassette"))
-        ajout(s, "scanlines", Curseur("Lignes CRT", 0, 100, 0, " %"))
+                                      "Une bande qui grésille et qui défile, comme sur une vieille cassette."))
+        ajout(s, "scanlines", Curseur("Lignes CRT", 0, 100, 0, " %",
+                                      "Les lignes horizontales d'un écran cathodique."))
         ajout(s, "grille", Curseur("Grille de phosphore", 0, 100, 0, " %",
-                                   "Les petites bandes rouge, vert, bleu d'un vieil écran"))
-        ajout(s, "courbure", Curseur("Courbure d'écran", 0, 100, 0, " %"))
-        ajout(s, "vignette", Curseur("Vignette", 0, 100, 0, " %"))
-        ajout(s, "grain", Curseur("Grain", 0, 100, 0, " %"))
+                                   "Les petites bandes rouge, vert, bleu d'un vieil écran."))
+        ajout(s, "courbure", Curseur("Courbure d'écran", 0, 100, 0, " %",
+                                     "Bombe l'image comme un écran de télé."))
+        ajout(s, "vignette", Curseur("Vignette", 0, 100, 0, " %",
+                                     "Assombrit les coins pour centrer le regard."))
+        ajout(s, "grain", Curseur("Grain", 0, 100, 0, " %", "Un grain de pellicule par-dessus tout."))
 
         s = section("Export", "Dernière ligne droite.")
         ajout(s, "echelle_export", Curseur("Agrandissement", 1, 8, 1, "×",
-                                           "Multiplie la taille du fichier final, pixels nets"))
+                                           "Multiplie la taille du fichier final, avec des pixels bien nets."))
         conteneur = QWidget()
-        cl = QHBoxLayout(conteneur)
-        cl.setContentsMargins(16, 6, 16, 2)
-        b = QPushButton("Tout remettre à zéro")
+        rl = QHBoxLayout(conteneur)
+        rl.setContentsMargins(18, 8, 18, 2)
+        b = self._bouton("Tout remettre à zéro", "reinit")
         b.clicked.connect(lambda: (self._appliquer_reglages({}),
                                    self.vue.dire("Et voilà, tout est remis à zéro")))
-        cl.addWidget(b)
+        rl.addWidget(b)
         s.ajouter(conteneur)
         lay.addStretch()
         defile.setWidget(interieur)
-        return defile
+        return carte
+
+    def _miniature_prete(self, generation, nom, image):
+        if generation == self.miniatures.generation():
+            self.galerie.definir_image(nom, image)
+
 
     def _menus(self):
         m = self.menuBar().addMenu("Fichier")
@@ -1209,8 +1173,11 @@ class Fenetre(QMainWindow):
         self._reglages_courants = self.reglages()
         self.minuteur.start()
         self.minuteur_histo.start()
-        for s in self.sections:  # un petit point signale les sections modifiées
+        for s in self.sections:  # le voyant d'une section s'allume quand elle est modifiée
             s.marquer(any(self.c[k].valeur() != moteur.REGLAGES_DEFAUT[k] for k in s.cles))
+        # Le style de la galerie reste surligné tant qu'on n'y a pas touché
+        actif = self._style_actif
+        self.galerie.marquer_actif(actif[0] if actif and actif[1] == self._etat_style() else None)
 
     def _algo_change(self):
         algo = self.c["algorithme"].valeur()
@@ -1265,14 +1232,13 @@ class Fenetre(QMainWindow):
         for cle in section.cles:
             r[cle] = moteur.REGLAGES_DEFAUT[cle]
         self._appliquer_reglages(r)
-        self.vue.dire(f"Hop, {section.titre.replace('&&', '&')} remis à zéro")
+        self.vue.dire(f"Hop, {section.titre} remis à zéro")
 
-    def _appliquer_style(self, index):
-        if index > 0:
-            nom = self.styles.itemText(index)
-            self._appliquer_reglages(STYLES[nom])
-            self.vue.dire(f"Hop, style « {nom} »")
-        self.styles.setCurrentIndex(0)
+    def _appliquer_style(self, nom):
+        self._appliquer_reglages(STYLES[nom])
+        self._style_actif = (nom, self._etat_style())
+        self.galerie.marquer_actif(nom)
+        self.vue.dire(f"Hop, style « {nom} »")
 
     def surprendre(self):
         r = {"algorithme": random.choice(moteur.ALGORITHMES),
@@ -1288,7 +1254,7 @@ class Fenetre(QMainWindow):
         self._appliquer_reglages(r)
         phrases = ["Tiens, essaie ça", "Pas mal, non ?", "Allez, on tente", "Et pourquoi pas ?",
                    "Celui-là, il est cool", "Bon, on verra bien"]
-        self.vue.dire(f"🎲  {random.choice(phrases)}  ({r['palette_nom']}, {r['algorithme']})")
+        self.vue.dire(f"{random.choice(phrases)}  ·  {r['palette_nom']}, {r['algorithme']}")
 
     def _etat_style(self):
         r = {cle: w.valeur() for cle, w in self.c.items()}
@@ -1390,7 +1356,6 @@ class Fenetre(QMainWindow):
         anime = self.vinfo is not None and self.vinfo["frames"] > 1
         for w in self.zone_video:
             w.setVisible(anime)
-        self.ressort.setVisible(not anime)
         if anime:
             self.timeline.blockSignals(True)
             self.timeline.setRange(0, self.vinfo["frames"] - 1)
@@ -1398,6 +1363,7 @@ class Fenetre(QMainWindow):
             self.timeline.blockSignals(False)
             self._maj_temps()
         self.b_exporter.setEnabled(True)
+        self.miniatures.calculer(src)
         if self.liste_palette.valeur() == PALETTE_AUTO:
             self._recalculer_auto(rendre=False)
             self.nuancier.definir(self.couleurs())
@@ -1411,6 +1377,13 @@ class Fenetre(QMainWindow):
     def _lancer_rendu(self):
         if self.src is None or self.lecture is not None:
             return
+        # Même image, mêmes réglages, même frame : l'aperçu affiché est déjà le bon
+        demande = (self._reglages_courants, id(self.src) if self.vinfo is None else self.vinfo["chemin"],
+                   self.frame)
+        if demande == self._derniere_demande:
+            return
+        self._derniere_demande = demande
+        self.etat.definir(calcul=True)
         self.rendu.demander(self._reglages_courants, src=self.src if self.vinfo is None else None,
                             video_info=self.vinfo, frame=self.frame)
 
@@ -1424,8 +1397,9 @@ class Fenetre(QMainWindow):
         self._maj_info(out, f"{ms:.0f} ms")
 
     def _maj_info(self, out, fin):
-        n = len(self._reglages_courants.get("palette", []))
-        self.info.setText(f"{out.shape[1]}×{out.shape[0]}   {n} couleurs   {fin}")
+        palette = self._reglages_courants.get("palette", [])
+        self.etat.definir(f"{out.shape[1]}×{out.shape[0]}  ·  {len(palette)} couleurs  ·  {fin}",
+                          palette, calcul=False)
 
     # ----- Vidéo
     def _timeline_bouge(self, v):
@@ -1448,7 +1422,7 @@ class Fenetre(QMainWindow):
         self.lecture = Lecture(self.vinfo, self.frame, lambda: self._reglages_courants)
         self.lecture.image.connect(self._image_lue)
         self.lecture.start()
-        self.b_lecture.setText("❚❚")
+        self.b_lecture.setIcon(t.icone("pause", t.ENCRE))
 
     def _image_lue(self, out, src, frame):
         if self.lecture is None:
@@ -1470,7 +1444,8 @@ class Fenetre(QMainWindow):
             l.actif = False
             l.affichee.set()
             l.wait(3000)
-            self.b_lecture.setText("▶")
+            self.b_lecture.setIcon(t.icone("lecture", t.ENCRE))
+            self._derniere_demande = None  # la lecture a remplacé l'aperçu : on le recalcule
             self.minuteur.start()
 
     # ----- Affichage
@@ -1529,10 +1504,11 @@ class Fenetre(QMainWindow):
     def _export_fini(self, chemin):
         self.progres.reset()
         duree = time.perf_counter() - self.t_export
-        self.vue.dire(f"Et voilà ! Fini en {duree:.1f} s 🦀", 3.5)
+        self.vue.dire(f"Et voilà ! Fini en {duree:.1f} s", 3.5)
         boite = QMessageBox(self)
         boite.setWindowTitle("C'est fini")
-        boite.setText(f"Et voilà ! 🦀\n\n« {os.path.basename(chemin)} » est prêt.")
+        boite.setIconPixmap(pixmap_crabe(3))
+        boite.setText(f"Et voilà !\n\n« {os.path.basename(chemin)} » est prêt.")
         voir = boite.addButton(f"Voir dans {GESTIONNAIRE}", QMessageBox.ButtonRole.ActionRole)
         boite.addButton("Cool", QMessageBox.ButtonRole.AcceptRole)
         boite.exec()
@@ -1547,8 +1523,10 @@ class Fenetre(QMainWindow):
     def closeEvent(self, e):
         self.prefs.setValue("derniers_reglages", json.dumps(self._etat_style(), ensure_ascii=False))
         self.arreter_lecture()
+        self.miniatures.arreter()
         self.rendu.arreter()
         super().closeEvent(e)
+
 
 
 def reveler(chemin):
@@ -1577,7 +1555,8 @@ def auto_test(dossier):
         journal.flush()
 
     app = QApplication.instance() or QApplication(sys.argv)
-    app.setStyleSheet(STYLE)
+    t.charger_polices()
+    app.setStyleSheet(t.feuille_de_style())
     try:
         def attendre(cond, delai=60):
             t = time.time()
@@ -1619,6 +1598,7 @@ def auto_test(dossier):
             assert not erreurs, erreurs[0]
             assert os.path.getsize(sortie) > 0
             noter(f"export ok : {ext} ({os.path.getsize(sortie) // 1024} Ko)")
+        f.miniatures.arreter()
         f.rendu.arreter()
         noter("TOUT EST OK")
         return 0
@@ -1650,7 +1630,8 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(NOM)
     app.setStyle("Fusion")
-    app.setStyleSheet(STYLE)
+    t.charger_polices()
+    app.setStyleSheet(t.feuille_de_style())
     icone = os.path.join(DOSSIER, "icone.png")
     if os.path.exists(icone):
         app.setWindowIcon(QIcon(icone))

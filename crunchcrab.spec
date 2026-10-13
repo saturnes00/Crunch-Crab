@@ -6,13 +6,14 @@ import sys
 
 MAC = sys.platform == "darwin"
 WINDOWS = sys.platform.startswith("win")
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 a = Analysis(
     ["app.py"],
-    datas=[("icone.png", ".")],
+    # La police pixel des titres (Silkscreen, licence OFL) voyage avec sa licence
+    datas=[("icone.png", "."), ("polices/*.ttf", "polices"), ("polices/OFL-Silkscreen.txt", "polices")],
     # ffmpeg (fourni par imageio-ffmpeg) est inclus automatiquement par son hook PyInstaller
-    hiddenimports=["imageio_ffmpeg"],
+    hiddenimports=["imageio_ffmpeg", "PySide6.QtSvg"],
     excludes=["tkinter", "matplotlib", "scipy", "pandas", "IPython", "PySide6.QtNetwork",
               "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtPdf", "PySide6.QtWebEngineCore"],
     # Garde moteur.py en source : Numba en a besoin pour mettre ses compilations en cache

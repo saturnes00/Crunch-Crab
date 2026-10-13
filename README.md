@@ -68,7 +68,8 @@ Le tout premier lancement prend quelques secondes de plus : le moteur se compile
 - **Glitch** : tranches décalées, blocs corrompus, lignes étirées, figé ou animé
 - **Optique** : aberration chromatique, décalage RVB, bavure VHS, lueur, fuite de lumière
 - **Écran** : artefacts JPEG, postérisation, bande VHS, lignes CRT, grille de phosphore, courbure, vignette, grain
-- **18 styles tout prêts**, un bouton 🎲 *Surprends-moi*, annuler / rétablir, comparaison avant / après
+- **18 styles tout prêts**, présentés en galerie avec des miniatures calculées sur ton image, un bouton *Surprends-moi*, annuler / rétablir, comparaison avant / après
+- **Chaque réglage est expliqué** par une petite phrase, et des flèches ‹ › font défiler méthodes et palettes
 - **Vidéo** : aperçu en temps réel, export **MP4** (avec le son), **GIF** animé, **MOV ProRes** ; et **PNG** pour les images
 
 ## Raccourcis
@@ -107,7 +108,9 @@ Sur macOS, `./creer_app.sh` crée aussi un raccourci dans *Applications* qui lan
 |---|---|
 | `moteur.py` | Le cœur : tramage, palettes et effets. Les boucles pixel par pixel sont compilées avec [Numba](https://numba.pydata.org), c'est ce qui rend l'aperçu instantané. Les calculs indépendants ligne par ligne sont répartis sur tous les cœurs du processeur. |
 | `video.py` | Lecture et écriture des vidéos et GIF avec ffmpeg. |
-| `app.py` | L'interface ([PySide6 / Qt](https://doc.qt.io/qtforpython-6/)). Les couleurs du thème sont en haut du fichier. |
+| `app.py` | L'interface ([PySide6 / Qt](https://doc.qt.io/qtforpython-6/)) : aperçu, galerie de styles, fenêtre. |
+| `theme.py` | La direction artistique : couleurs, dégradé, polices, feuille de style et icônes. |
+| `composants.py` | Les éléments du panneau : curseurs en bargraphe, interrupteurs, sections, galerie. |
 | `crunchcrab.spec` | La recette [PyInstaller](https://pyinstaller.org) pour fabriquer l'app. |
 | `.github/workflows/` | GitHub construit et teste l'app sur les 3 systèmes à chaque mise à jour, puis publie les versions. |
 
@@ -127,6 +130,7 @@ Les retours, signalements de bugs et suggestions sont les bienvenus dans les [Is
 ## Crédits
 
 - Photos des exemples, tirées des données de [scikit-image](https://scikit-image.org) : le chat *Chelsea* (CC0, Stéfan van der Walt), la tasse de café (CC0, Rachel Michetti), la fusée (domaine public, SpaceX).
+- Police des titres : [Silkscreen](https://github.com/googlefonts/silkscreen) de Jason Kottke, sous licence SIL Open Font License 1.1 (fournie dans `polices/`).
 - L'app inclut [ffmpeg](https://ffmpeg.org) (via [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg)), distribué sous sa propre licence (GPL).
 
 ## Licence
