@@ -6,7 +6,7 @@ import sys
 
 MAC = sys.platform == "darwin"
 WINDOWS = sys.platform.startswith("win")
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 a = Analysis(
     ["app.py"],

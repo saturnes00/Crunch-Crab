@@ -196,6 +196,12 @@ STYLES = {
                       "taille_pixel": 2, "taille_motif": 3, "lueur": 40, "scanlines": 40},
     "Commodore 64": {"palette_nom": "Commodore 64", "algorithme": "Bayer 4×4",
                      "taille_pixel": 4, "saturation": 120},
+    "Macintosh II": {"palette_nom": "Macintosh II", "algorithme": "Shiau-Fan",
+                     "taille_pixel": 2, "lineaire": True},
+    "ZX Spectrum": {"palette_nom": "ZX Spectrum", "algorithme": "Bayer 2×2",
+                    "taille_pixel": 4, "saturation": 140, "contraste": 15},
+    "Fraise lait": {"palette_nom": "Fraise lait", "carte_degrade": True, "algorithme": "Fan",
+                    "taille_pixel": 2, "lueur": 25, "grain": 10},
 }
 
 # Ce que le dé a le droit de toucher, et jusqu'où
@@ -813,7 +819,9 @@ class Export(QThread):
                         if src is None:
                             fin_lecture = True
                             break
-                        en_cours.append(pool.submit(moteur.traiter, src, self.reglages, lues, True))
+                        # Une image par cœur : pas de découpage en bandes en plus
+                        en_cours.append(pool.submit(moteur.traiter, src, self.reglages, lues,
+                                                    True, False))
                         lues += 1
                     if not en_cours:
                         break
@@ -1060,6 +1068,10 @@ class Fenetre(QMainWindow):
             "Idéal pour les bichromies et les dégradés."))
         ajout(s, "perceptuel", Interrupteur("Couleurs perceptuelles", True,
                                             "Compare les couleurs comme le fait l'œil humain"))
+        ajout(s, "lineaire", Interrupteur(
+            "Lumière linéaire", False,
+            "Trame comme la lumière se mélange vraiment : vu de loin, les demi-tons\n"
+            "sont plus fidèles (l'image paraît un peu plus sombre de près)."))
 
         s = section("Retouche", "Un petit coup de propre avant de tramer.")
         ajout(s, "luminosite", Curseur("Luminosité", -100, 100, 0))

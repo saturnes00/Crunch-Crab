@@ -61,14 +61,14 @@ Le tout premier lancement prend quelques secondes de plus : le moteur se compile
 
 ## Ce qu'elle sait faire
 
-- **23 méthodes de tramage** : Floyd-Steinberg, Atkinson, Jarvis, Stucki, Bayer, bruit bleu, trames en points, lignes, croix, vagues, demi-teinte façon journal…
-- **17 palettes** (Game Boy, PICO-8, Commodore 64, CGA, néon, risographie…) + niveaux de gris, palette tirée de ton image, ou ta propre palette
+- **25 méthodes de tramage** : Floyd-Steinberg, Atkinson, Shiau-Fan, Jarvis, Stucki, Bayer, bruit bleu, trames en points, lignes, croix, vagues, demi-teinte façon journal…
+- **21 palettes** (Game Boy, PICO-8, Commodore 64, ZX Spectrum, Macintosh II, CGA, néon, risographie…) + niveaux de gris, palette tirée de ton image, ou ta propre palette
 - **Retouche** : luminosité, contraste, gamma, saturation, teinte, température, flou, netteté, encrage des contours
 - **Déformations** : miroir et kaléidoscope, ondulation, tri de pixels
 - **Glitch** : tranches décalées, blocs corrompus, lignes étirées, figé ou animé
 - **Optique** : aberration chromatique, décalage RVB, bavure VHS, lueur, fuite de lumière
 - **Écran** : artefacts JPEG, postérisation, bande VHS, lignes CRT, grille de phosphore, courbure, vignette, grain
-- **15 styles tout prêts**, un bouton 🎲 *Surprends-moi*, annuler / rétablir, comparaison avant / après
+- **18 styles tout prêts**, un bouton 🎲 *Surprends-moi*, annuler / rétablir, comparaison avant / après
 - **Vidéo** : aperçu en temps réel, export **MP4** (avec le son), **GIF** animé, **MOV ProRes** ; et **PNG** pour les images
 
 ## Raccourcis
@@ -105,7 +105,7 @@ Sur macOS, `./creer_app.sh` crée aussi un raccourci dans *Applications* qui lan
 
 | Fichier | Rôle |
 |---|---|
-| `moteur.py` | Le cœur : tramage, palettes et effets. Les boucles pixel par pixel sont compilées avec [Numba](https://numba.pydata.org), c'est ce qui rend l'aperçu instantané. |
+| `moteur.py` | Le cœur : tramage, palettes et effets. Les boucles pixel par pixel sont compilées avec [Numba](https://numba.pydata.org), c'est ce qui rend l'aperçu instantané. Les calculs indépendants ligne par ligne sont répartis sur tous les cœurs du processeur. |
 | `video.py` | Lecture et écriture des vidéos et GIF avec ffmpeg. |
 | `app.py` | L'interface ([PySide6 / Qt](https://doc.qt.io/qtforpython-6/)). Les couleurs du thème sont en haut du fichier. |
 | `crunchcrab.spec` | La recette [PyInstaller](https://pyinstaller.org) pour fabriquer l'app. |
