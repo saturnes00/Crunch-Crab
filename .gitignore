@@ -1,0 +1,21 @@
+# Clés SSH : ne jamais publier
+crab
+crab.pub
+*.pem
+
+# Python / app
+.venv/
+__pycache__/
+erreurs.log
+icone.iconset/
+
+# macOS
+.DS_Store
+
+# Construction
+build/
+dist/
+test-source/
+test-app/
+icone.ico
+icone.icns
