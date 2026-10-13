@@ -22,6 +22,8 @@ rend le programme presque aussi rapide que du C.
 import io
 import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
 if getattr(sys, "frozen", False):
@@ -44,6 +46,32 @@ def compiler(fn):
 
 
 LUMA = np.array([0.299, 0.587, 0.114], np.float32)
+
+# ---------------------------------------------------------------------------
+# Calcul sur plusieurs cœurs
+# ---------------------------------------------------------------------------
+# Les fonctions compilées relâchent le GIL (nogil=True) : on peut donc découper
+# l'image en bandes horizontales et les calculer en même temps sur tous les cœurs.
+# L'export vidéo traite déjà plusieurs images à la fois : il désactive ce découpage.
+
+COEURS = max(1, os.cpu_count() or 1)
+_pool = None
+_local = threading.local()
+
+
+def _bandes(noyau, h, *args):
+    """Appelle noyau(*args, y0, y1) sur des bandes de lignes, en parallèle si ça vaut le coup."""
+    n = COEURS if getattr(_local, "parallele", True) and h >= 64 else 1
+    if n == 1:
+        noyau(*args, 0, h)
+        return
+    global _pool
+    if _pool is None:
+        _pool = ThreadPoolExecutor(COEURS, thread_name_prefix="bande")
+    pas = -(-h // n)
+    taches = [_pool.submit(noyau, *args, y0, min(h, y0 + pas)) for y0 in range(0, h, pas)]
+    for t in taches:
+        t.result()
 
 # ---------------------------------------------------------------------------
 # Palettes
@@ -72,6 +100,14 @@ PALETTES = {
     "Risographie": ["#1a1a1a", "#0078bf", "#ff48b0", "#f7f1e3"],
     "Coucher de soleil": ["#1a0f2e", "#5b1f4f", "#c2365a", "#f57b42", "#ffd27a"],
     "Bichromie bleue": ["#0a1033", "#e9edf7"],
+    "Game Boy Pocket": ["#000000", "#555555", "#aaaaaa", "#ffffff"],
+    "ZX Spectrum": ["#000000", "#0000d7", "#d70000", "#d700d7", "#00d700", "#00d7d7",
+                    "#d7d700", "#d7d7d7", "#0000ff", "#ff0000", "#ff00ff", "#00ff00",
+                    "#00ffff", "#ffff00", "#ffffff"],
+    "Macintosh II": ["#ffffff", "#fbf305", "#ff6403", "#dd0907", "#f20884", "#4700a5",
+                     "#0000d3", "#02abea", "#1fb714", "#006412", "#562c05", "#90713a",
+                     "#c0c0c0", "#808080", "#404040", "#000000"],
+    "Fraise lait": ["#2d1b2e", "#b0305c", "#eb564b", "#ffb0a3", "#fff4e0"],
 }
 
 
@@ -121,6 +157,8 @@ NOYAUX = {
     "Sierra 2 lignes": ([(1, 0, 4), (2, 0, 3), (-2, 1, 1), (-1, 1, 2), (0, 1, 3),
                          (1, 1, 2), (2, 1, 1)], 16),
     "Sierra Lite": ([(1, 0, 2), (-1, 1, 1), (0, 1, 1)], 4),
+    "Shiau-Fan": ([(1, 0, 4), (-3, 1, 1), (-2, 1, 1), (-1, 1, 2), (0, 1, 8)], 16),
+    "Fan": ([(1, 0, 7), (-2, 1, 1), (-1, 1, 3), (0, 1, 5)], 16),
     "Diffusion horizontale": ([(1, 0, 1)], 1),
     "Diffusion verticale": ([(0, 1, 1)], 1),
 }
@@ -156,36 +194,54 @@ def _plus_proche(r, g, b, pal, wr, wg, wb):
 
 
 @compiler
-def _carte_plus_proche(img, pal, poids):
-    h, w, _ = img.shape
-    out = np.empty((h, w), np.int32)
-    for y in range(h):
+def _carte_plus_proche(img, pal, poids, out, y0, y1):
+    w = img.shape[1]
+    for y in range(y0, y1):
         for x in range(w):
             out[y, x] = _plus_proche(img[y, x, 0], img[y, x, 1], img[y, x, 2],
                                      pal, poids[0], poids[1], poids[2])
-    return out
 
 
 @compiler
-def _ordonne(img, pal, carte, ecart, poids):
+def _ordonne(img, pal, carte, ecart, poids, out, y0, y1):
     """Tramage ordonné : on décale chaque pixel selon la carte de seuils, puis couleur la plus proche."""
-    h, w, _ = img.shape
+    w = img.shape[1]
     th, tw = carte.shape
-    out = np.empty((h, w), np.int32)
-    for y in range(h):
+    for y in range(y0, y1):
         for x in range(w):
             d = (carte[y % th, x % tw] - 0.5) * ecart
             out[y, x] = _plus_proche(img[y, x, 0] + d, img[y, x, 1] + d, img[y, x, 2] + d,
                                      pal, poids[0], poids[1], poids[2])
-    return out
 
 
 @compiler
-def _remap(img, yy, xx, dehors):
+def _bruit_ordonne(img, pal, carte, ecart, poids, out, y0, y1):
+    """Comme _ordonne, mais avec une carte de seuils de la taille de l'image (bruit aléatoire)."""
+    w = img.shape[1]
+    for y in range(y0, y1):
+        for x in range(w):
+            d = (carte[y, x] - 0.5) * ecart
+            out[y, x] = _plus_proche(img[y, x, 0] + d, img[y, x, 1] + d, img[y, x, 2] + d,
+                                     pal, poids[0], poids[1], poids[2])
+
+
+@compiler
+def _indices_vers_rgb(idx, pal8, out, y0, y1):
+    """Remplace chaque indice de palette par sa couleur (uint8)."""
+    w = idx.shape[1]
+    for y in range(y0, y1):
+        for x in range(w):
+            k = idx[y, x]
+            out[y, x, 0] = pal8[k, 0]
+            out[y, x, 1] = pal8[k, 1]
+            out[y, x, 2] = pal8[k, 2]
+
+
+@compiler
+def _remap(img, yy, xx, dehors, out, y0, y1):
     """Déplace les pixels selon une carte de coordonnées (courbure d'écran)."""
-    h, w = yy.shape
-    out = np.empty_like(img)
-    for y in range(h):
+    w = yy.shape[1]
+    for y in range(y0, y1):
         for x in range(w):
             if dehors[y, x]:
                 out[y, x, 0] = 0
@@ -195,7 +251,6 @@ def _remap(img, yy, xx, dehors):
                 out[y, x, 0] = img[yy[y, x], xx[y, x], 0]
                 out[y, x, 1] = img[yy[y, x], xx[y, x], 1]
                 out[y, x, 2] = img[yy[y, x], xx[y, x], 2]
-    return out
 
 
 @compiler
@@ -224,12 +279,12 @@ def _flou_lignes(a, rayon):
 
 
 @compiler
-def _superposer(out, halo, force, r, g, b):
+def _superposer(out, halo, force, r, g, b, y0, y1):
     """Mode « écran » : éclaire l'image avec un halo (lueur, fuite de lumière), sur place."""
-    h, w, _ = out.shape
+    w = out.shape[1]
     teinte = (r, g, b)
     plein = halo.ndim == 3
-    for y in range(h):
+    for y in range(y0, y1):
         for x in range(w):
             for c in range(3):
                 v = (halo[y, x, c] if plein else halo[y, x, 0]) * force * teinte[c]
@@ -238,44 +293,46 @@ def _superposer(out, halo, force, r, g, b):
 
 
 @compiler
-def _en_octets_rapide(a):
-    h, w, c = a.shape
-    out = np.empty((h, w, c), np.uint8)
-    for y in range(h):
+def _en_octets_rapide(a, out, y0, y1):
+    w, c = a.shape[1], a.shape[2]
+    for y in range(y0, y1):
         for x in range(w):
             for k in range(c):
                 v = a[y, x, k] * 255 + 0.5
                 out[y, x, k] = 0 if v < 0 else (255 if v > 255 else np.uint8(v))
-    return out
 
 
 @compiler
 def _diffusion_erreur(img, pal, kx, ky, kw, force, zigzag, poids):
     h, w, _ = img.shape
-    buf = img.copy()
+    # Tampon avec une marge de 3 pixels autour : plus besoin de tester les bords
+    # à chaque voisin, la boucle intérieure va nettement plus vite.
+    m = 3
+    buf = np.zeros((h + m, w + 2 * m, 3), np.float32)
+    buf[:h, m:m + w] = img
     out = np.empty((h, w), np.int32)
     n = kx.shape[0]
+    wr, wg, wb = poids[0], poids[1], poids[2]
     for y in range(h):
         inverse = zigzag and (y & 1) == 1
         for i in range(w):
             x = w - 1 - i if inverse else i
-            r = min(max(buf[y, x, 0], -0.5), 1.5)
-            g = min(max(buf[y, x, 1], -0.5), 1.5)
-            b = min(max(buf[y, x, 2], -0.5), 1.5)
-            k = _plus_proche(r, g, b, pal, poids[0], poids[1], poids[2])
+            bx = x + m
+            r = min(max(buf[y, bx, 0], -0.5), 1.5)
+            g = min(max(buf[y, bx, 1], -0.5), 1.5)
+            b = min(max(buf[y, bx, 2], -0.5), 1.5)
+            k = _plus_proche(r, g, b, pal, wr, wg, wb)
             out[y, x] = k
             er = (r - pal[k, 0]) * force
             eg = (g - pal[k, 1]) * force
             eb = (b - pal[k, 2]) * force
             for j in range(n):
-                dx = -kx[j] if inverse else kx[j]
-                nx = x + dx
+                nx = bx - kx[j] if inverse else bx + kx[j]
                 ny = y + ky[j]
-                if 0 <= nx < w and ny < h:
-                    p = kw[j]
-                    buf[ny, nx, 0] += er * p
-                    buf[ny, nx, 1] += eg * p
-                    buf[ny, nx, 2] += eb * p
+                p = kw[j]
+                buf[ny, nx, 0] += er * p
+                buf[ny, nx, 1] += eg * p
+                buf[ny, nx, 2] += eb * p
     return out
 
 
@@ -358,6 +415,24 @@ def _carte_seuils(algo, taille):
     return _rang_uniforme(carte)
 
 
+@compiler
+def _points_ronds(flou, cell, ca, sa, fonce, clair, out, y0, y1):
+    """Pour chaque pixel : est-il dans le point de sa cellule (tournée de l'angle de trame) ?"""
+    h, w = flou.shape
+    for y in range(y0, y1):
+        for x in range(w):
+            u = np.float32(x) * ca + np.float32(y) * sa
+            v = -np.float32(x) * sa + np.float32(y) * ca
+            cu = (np.floor(u / cell) + 0.5) * cell
+            cv = (np.floor(v / cell) + 0.5) * cell
+            dist = np.sqrt((u - cu) ** 2 + (v - cv) ** 2)
+            cx = min(max(cu * ca - cv * sa, 0.0), w - 1.0)
+            cy = min(max(cu * sa + cv * ca, 0.0), h - 1.0)
+            sombre = 1 - min(max(flou[int(cy), int(cx)], 0.0), 1.0)
+            rayon = cell * np.sqrt(sombre / np.pi)
+            out[y, x] = fonce if dist < rayon else clair
+
+
 def _demi_teinte(img, pal, taille, angle_deg):
     """Trame d'imprimerie : des points ronds dont la taille suit la luminosité."""
     h, w, _ = img.shape
@@ -366,20 +441,12 @@ def _demi_teinte(img, pal, taille, angle_deg):
     flou = Image.fromarray(np.clip(lum * 255, 0, 255).astype(np.uint8))
     flou = np.asarray(flou.filter(ImageFilter.BoxBlur(cell / 2)), np.float32) / 255
     a = np.deg2rad(angle_deg)
-    ca, sa = np.cos(a), np.sin(a)
-    y, x = np.mgrid[0:h, 0:w].astype(np.float32)
-    u = x * ca + y * sa
-    v = -x * sa + y * ca
-    cu = (np.floor(u / cell) + 0.5) * cell
-    cv = (np.floor(v / cell) + 0.5) * cell
-    dist = np.hypot(u - cu, v - cv)
-    cx = np.clip(cu * ca - cv * sa, 0, w - 1).astype(np.int32)
-    cy = np.clip(cu * sa + cv * ca, 0, h - 1).astype(np.int32)
-    sombre = 1 - np.clip(flou[cy, cx], 0, 1)
-    rayon = cell * np.sqrt(sombre / np.pi)
     luma_pal = pal @ LUMA
     fonce, clair = int(np.argmin(luma_pal)), int(np.argmax(luma_pal))
-    return np.where(dist < rayon, fonce, clair).astype(np.int32)
+    out = np.empty((h, w), np.int32)
+    _bandes(_points_ronds, h, np.ascontiguousarray(flou), np.float32(cell),
+            np.float32(np.cos(a)), np.float32(np.sin(a)), fonce, clair, out)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +465,7 @@ REGLAGES_DEFAUT = {
     # Couleurs
     "palette": PALETTES["Noir & blanc"],
     "perceptuel": True,
+    "lineaire": False,     # trame en lumière linéaire : demi-tons plus fidèles
     "carte_degrade": False,  # répartit la luminosité sur toute la palette
     # Retouche
     "luminosite": 0,
@@ -538,27 +606,41 @@ def _tramer(img, r, rng):
     poids = LUMA * 3 if r["perceptuel"] else np.ones(3, np.float32)
     algo = r["algorithme"]
     force = r["force"] / 100
+    h, w, _ = img.shape
+    pal8 = (pal * 255 + 0.5).astype(np.uint8)
+
+    # En lumière linéaire, la moyenne des points tramés correspond vraiment à la
+    # luminosité d'origine (l'œil voit en gamma, l'écran mélange en linéaire).
+    pal_c = pal
+    if r["lineaire"] and algo != "Demi-teinte (points ronds)":
+        img = np.power(np.clip(img, 0, 1), np.float32(2.2), dtype=np.float32)
+        pal_c = np.power(pal, np.float32(2.2), dtype=np.float32)
 
     if algo in NOYAUX:
         noyau, div = NOYAUX[algo]
         k = np.array(noyau, np.int32)
-        idx = _diffusion_erreur(img, pal, k[:, 0].copy(), k[:, 1].copy(),
+        idx = _diffusion_erreur(img, pal_c, k[:, 0].copy(), k[:, 1].copy(),
                                 (k[:, 2] / div).astype(np.float32), np.float32(force),
                                 bool(r["zigzag"]), poids)
     elif algo == "Demi-teinte (points ronds)":
         idx = _demi_teinte(img, pal, r["taille_motif"], r["angle"])
-    elif algo == "Aucun (seuil)":
-        idx = _carte_plus_proche(img, pal, poids)
     else:
-        if algo == "Bruit aléatoire":
-            carte = rng.random(img.shape[:2], np.float32)
+        idx = np.empty((h, w), np.int32)
+        if algo == "Aucun (seuil)":
+            _bandes(_carte_plus_proche, h, img, pal_c, poids, idx)
         else:
-            carte = _carte_seuils(algo, int(r["taille_motif"]))
-        # L'écart entre deux couleurs voisines diminue quand la palette grandit
-        ecart = np.float32(force * 1.26 / len(pal) ** (1 / 3))
-        idx = _ordonne(img, pal, carte, ecart, poids)
+            # L'écart entre deux couleurs voisines diminue quand la palette grandit
+            ecart = np.float32(force * 1.26 / len(pal) ** (1 / 3))
+            if algo == "Bruit aléatoire":
+                carte = rng.random((h, w), np.float32)
+                _bandes(_bruit_ordonne, h, img, pal_c, carte, ecart, poids, idx)
+            else:
+                carte = _carte_seuils(algo, int(r["taille_motif"]))
+                _bandes(_ordonne, h, img, pal_c, carte, ecart, poids, idx)
 
-    return (pal[idx] * 255 + 0.5).astype(np.uint8)
+    out = np.empty((h, w, 3), np.uint8)
+    _bandes(_indices_vers_rgb, h, idx, pal8, out)
+    return out
 
 
 @lru_cache(maxsize=8)
@@ -588,7 +670,10 @@ def _agrandir(a, w, h):
 
 
 def _en_octets(a):
-    return _en_octets_rapide(np.ascontiguousarray(a, np.float32))
+    a = np.ascontiguousarray(a, np.float32)
+    out = np.empty(a.shape, np.uint8)
+    _bandes(_en_octets_rapide, a.shape[0], a, out)
+    return out
 
 
 def _glitch(out, r, rng, frame):
@@ -664,7 +749,8 @@ def _optique(out, r, rng):
         petite = petite.filter(ImageFilter.GaussianBlur(max(1, min(h, w) / 240)))
         b = np.asarray(petite.resize((w, h), Image.Resampling.BILINEAR))
         out = np.ascontiguousarray(out)
-        _superposer(out, b, np.float32(r["lueur"] / 100 * 1.5 / 255), 1.0, 1.0, 1.0)
+        _bandes(_superposer, h, out, b, np.float32(r["lueur"] / 100 * 1.5 / 255),
+                1.0, 1.0, 1.0)
 
     if r["fuite_lumiere"]:
         cx, cy = rng.uniform(-0.2, 1.2), rng.uniform(-0.2, 1.2)
@@ -675,8 +761,8 @@ def _optique(out, r, rng):
         x = np.linspace(0, 1, pw, dtype=np.float32)[None, :]
         masque = _agrandir(np.exp(-((x - cx) ** 2 + (y - cy) ** 2) / 0.12), w, h)
         out = np.ascontiguousarray(out)
-        _superposer(out, masque[..., None], np.float32(r["fuite_lumiere"] / 100),
-                    *[float(c) for c in couleur])
+        _bandes(_superposer, h, out, np.ascontiguousarray(masque[..., None]),
+                np.float32(r["fuite_lumiere"] / 100), *[float(c) for c in couleur])
     return out
 
 
@@ -721,7 +807,9 @@ def _ecran(out, r, rng, frame, taille_pixel):
 
     if r["courbure"]:
         yy, xx, dehors = _carte_radiale(h, w, round(r["courbure"] / 100 * 0.3, 4))
-        out = _remap(np.ascontiguousarray(out), yy, xx, dehors)
+        src = np.ascontiguousarray(out)
+        out = np.empty_like(src)
+        _bandes(_remap, h, src, yy, xx, dehors, out)
 
     if r["vignette"]:
         out *= (1 - (r["vignette"] / 100 * 0.85) * _carte_vignette(h, w))[..., None]
@@ -739,8 +827,12 @@ ECRAN = ("jpeg", "posterisation", "bande_vhs", "scanlines", "grille", "courbure"
          "vignette", "grain")
 
 
-def traiter(src, reglages, frame=0, avec_echelle=False):
-    """Applique tout le pipeline à une image RVB uint8 (H×W×3)."""
+def traiter(src, reglages, frame=0, avec_echelle=False, parallele=True):
+    """Applique tout le pipeline à une image RVB uint8 (H×W×3).
+
+    parallele=False : un seul cœur (quand l'appelant traite déjà plusieurs images à la fois).
+    """
+    _local.parallele = parallele
     r = {**REGLAGES_DEFAUT, **reglages}
     rng = np.random.default_rng(frame)  # même frame => même grain
     # Le glitch suit sa propre graine : figé, ou différent à chaque image
@@ -783,6 +875,8 @@ def traiter(src, reglages, frame=0, avec_echelle=False):
 def prechauffer():
     """Compile les fonctions Numba une première fois (quelques secondes au 1er lancement)."""
     img = (np.random.default_rng(0).random((16, 16, 3)) * 255).astype(np.uint8)
-    for algo in ("Floyd-Steinberg", "Bayer 4×4", "Aucun (seuil)"):
+    for algo in ("Floyd-Steinberg", "Bayer 4×4", "Aucun (seuil)", "Bruit aléatoire",
+                 "Demi-teinte (points ronds)"):
         traiter(img, {"algorithme": algo, "taille_pixel": 1, "tri_pixels": 50,
-                      "aberration": 20, "courbure": 20, "bavure": 20})
+                      "aberration": 20, "courbure": 20, "bavure": 20, "lueur": 20,
+                      "fuite_lumiere": 20})
