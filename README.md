@@ -1,104 +1,123 @@
-# 🦀 Crunch Crab
+<p align="center">
+  <img src="icone.png" width="128" alt="Crunch Crab">
+</p>
 
-**Crunch Crab** est une application macOS open source, elle permet de transformer vos images, GIF et vidéos en pixels tramés. Tramage, glitch, aberration chromatique, effets d'écran CRT ou de cassette VHS : tout se règle en direct, et l'export garde le son de vos vidéos.
+<h1 align="center">Crunch Crab</h1>
 
-Inspirée de DitherBoy, elle se veut gratuite, ouverte et facile à bidouiller.
+<p align="center">
+  Tramage, glitch et effets rétro pour tes images, GIF et vidéos.<br>
+  Gratuit, open source, sur macOS, Windows et Linux.
+</p>
+
+<p align="center">
+  <a href="https://github.com/saturnes00/CrunshCrab/releases/latest"><img src="https://img.shields.io/github/v/release/saturnes00/CrunshCrab?label=version&color=ff5b3a" alt="Version"></a>
+  <a href="https://github.com/saturnes00/CrunshCrab/actions/workflows/construire.yml"><img src="https://github.com/saturnes00/CrunshCrab/actions/workflows/construire.yml/badge.svg" alt="Construction"></a>
+  <img src="https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-0b0b0d" alt="Systèmes">
+</p>
+
+<p align="center">
+  <img src="docs/demo.gif" width="480" alt="Un chat passé dans plusieurs styles">
+</p>
 
 ---
 
-## Installation MAC OS
+## Télécharger
 
-### Prérequis
-- macOS
-- [Homebrew](https://brew.sh)
-- Python 3.13 et ffmpeg (installés à l'étape suivante)
+| Système | Fichier | |
+|---|---|---|
+| **macOS** (Apple Silicon) | [CrunchCrab-macOS.zip](https://github.com/saturnes00/CrunshCrab/releases/latest/download/CrunchCrab-macOS.zip) | Dézippe, puis glisse l'app dans *Applications* |
+| **Windows** 10 / 11 | [CrunchCrab-Windows.zip](https://github.com/saturnes00/CrunshCrab/releases/latest/download/CrunchCrab-Windows.zip) | Dézippe, puis lance `CrunchCrab.exe` |
+| **Linux** (x86-64) | [CrunchCrab-Linux.tar.gz](https://github.com/saturnes00/CrunshCrab/releases/latest/download/CrunchCrab-Linux.tar.gz) | Décompresse, puis lance `./CrunchCrab` |
 
-### Étapes
+Rien d'autre à installer : Python, l'interface et ffmpeg sont inclus.
+
+<details>
+<summary><b>Premier lancement : « l'app ne s'ouvre pas » ?</b></summary>
+
+L'app n'est pas signée par Apple ni par Microsoft (c'est payant), donc le système se méfie au premier lancement. C'est normal.
+
+- **macOS** : ouvre l'app une fois, puis va dans *Réglages Système → Confidentialité et sécurité* et clique sur **Ouvrir quand même**. Autre solution, dans le Terminal :
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/Crunch Crab.app"
+  ```
+- **Windows** : si SmartScreen affiche « Windows a protégé votre ordinateur », clique sur **Informations complémentaires → Exécuter quand même**.
+- **Linux** : lance `./installer.sh` dans le dossier pour ajouter Crunch Crab au menu des applications. Sur une installation minimale, il peut manquer `libxcb-cursor0` (`sudo apt install libxcb-cursor0`).
+
+Le tout premier lancement prend quelques secondes de plus : le moteur se compile pour ta machine, puis c'est gardé en cache.
+</details>
+
+## Aperçu
+
+<p align="center">
+  <img src="docs/capture.png" alt="L'interface de Crunch Crab avec la comparaison avant / après">
+</p>
+
+<p align="center">
+  <img src="docs/styles.png" alt="Neuf des styles prêts à l'emploi">
+</p>
+
+## Ce qu'elle sait faire
+
+- **23 méthodes de tramage** : Floyd-Steinberg, Atkinson, Jarvis, Stucki, Bayer, bruit bleu, trames en points, lignes, croix, vagues, demi-teinte façon journal…
+- **17 palettes** (Game Boy, PICO-8, Commodore 64, CGA, néon, risographie…) + niveaux de gris, palette tirée de ton image, ou ta propre palette
+- **Retouche** : luminosité, contraste, gamma, saturation, teinte, température, flou, netteté, encrage des contours
+- **Déformations** : miroir et kaléidoscope, ondulation, tri de pixels
+- **Glitch** : tranches décalées, blocs corrompus, lignes étirées, figé ou animé
+- **Optique** : aberration chromatique, décalage RVB, bavure VHS, lueur, fuite de lumière
+- **Écran** : artefacts JPEG, postérisation, bande VHS, lignes CRT, grille de phosphore, courbure, vignette, grain
+- **15 styles tout prêts**, un bouton 🎲 *Surprends-moi*, annuler / rétablir, comparaison avant / après
+- **Vidéo** : aperçu en temps réel, export **MP4** (avec le son), **GIF** animé, **MOV ProRes** ; et **PNG** pour les images
+
+## Raccourcis
+
+| | macOS | Windows / Linux |
+|---|---|---|
+| Ouvrir / exporter | ⌘O / ⌘E | Ctrl+O / Ctrl+E |
+| Annuler / rétablir | ⌘Z / ⇧⌘Z | Ctrl+Z / Ctrl+Maj+Z |
+| Enregistrer / charger un style | ⌘S / ⌘L | Ctrl+S / Ctrl+L |
+| Surprends-moi | R | R |
+| Comparer avant / après | C | C |
+| Lecture / pause | Espace | Espace |
+| Zoom | pincer, ⌘0 / ⌘1 / ⌘2 | Ctrl + molette, Ctrl+0 / 1 / 2 |
+
+Double-clic sur un réglage : il revient à sa valeur de départ.
+
+## Lancer depuis le code source
+
+Il faut Python 3.12 ou plus récent.
+
 ```bash
-# 1. Installer les dépendances système
-brew install ffmpeg python@3.13
-
-# 2. Créer un environnement Python isolé
-python3.13 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-
-# 3. Générer l'application
-./creer_app.sh
+git clone https://github.com/saturnes00/CrunshCrab.git
+cd CrunshCrab
+python3 -m venv .venv
+source .venv/bin/activate          # Windows : .venv\Scripts\activate
+pip install -r requirements.txt
+python app.py
 ```
 
-L'application **Crunch Crab** apparaît ensuite dans `~/Applications`. Il suffit de relancer `creer_app.sh` pour la mettre à jour après une modification du code.
+Pour fabriquer l'app autonome : `pip install pyinstaller && python outils/icones.py && pyinstaller crunchcrab.spec` (le résultat arrive dans `dist/`).
+Sur macOS, `./creer_app.sh` crée aussi un raccourci dans *Applications* qui lance directement le code du dossier.
 
----
-
-## Fonctionnalités
-
-### 🎨 Tramage et couleurs
-- **23 méthodes de tramage** : Floyd-Steinberg, Atkinson, Bayer, bruit bleu, trames (points, lignes, croix, vagues), demi-teinte…
-- **17 palettes** prédéfinies, plus les niveaux de gris, une palette extraite automatiquement de l'image et une palette entièrement personnalisable
-
-### 🛠️ Retouche
-Luminosité, contraste, gamma, saturation, teinte, température, flou, netteté et encrage des contours.
-
-### 🌀 Déformations
-Miroir et kaléidoscope, ondulation, tri de pixels (*pixel sorting*).
-
-### ⚡ Glitch
-Tranches décalées, blocs corrompus et lignes étirées, en version fixe ou animée.
-
-### 🔦 Optique
-Aberration chromatique, décalage RVB orientable, bavure VHS, lueur et fuite de lumière.
-
-### 📺 Effets d'écran
-Artefacts JPEG, postérisation, bande VHS, lignes de balayage CRT, grille de phosphore, courbure d'écran, vignettage et grain.
-
-### ✨ Confort d'utilisation
-- **15 styles prêts à l'emploi** pour démarrer vite
-- Bouton 🎲 **« Surprends-moi »** pour des combinaisons aléatoires
-- Annuler / rétablir illimité
-- Comparaison avant / après avec séparateur glissant
-- Sauvegarde et chargement de vos propres styles
-
-### 💾 Export
-| Format | Usage |
-|---|---|
-| PNG | Image fixe |
-| GIF | Animation légère |
-| MP4 | Vidéo avec le son |
-| MOV ProRes | Qualité maximale, idéal pour le montage |
-
----
-
-## Raccourcis clavier
-
-| Raccourci | Action |
-|---|---|
-| `⌘O` / `⌘E` | Ouvrir / exporter |
-| `⌘S` / `⌘L` | Enregistrer / charger un style |
-| `⌘Z` / `⇧⌘Z` | Annuler / rétablir |
-| `R` | Surprends-moi |
-| `C` | Comparer avant / après (glisser le séparateur) |
-| `Espace` | Lecture / pause |
-| `⌘0` / `⌘1` / `⌘2` | Ajuster à la fenêtre / taille réelle / zoom 2× |
-| Pincement trackpad | Zoomer |
-| Double-clic sur un réglage | Revenir à la valeur par défaut |
-
----
-
-## Structure du projet
+## Comment c'est fait
 
 | Fichier | Rôle |
 |---|---|
-| `moteur.py` | Le cœur de l'app : tramage, palettes et effets |
-| `video.py` | Lecture et écriture des vidéos et GIF via ffmpeg |
-| `app.py` | L'interface utilisateur (les couleurs du thème sont définies en haut du fichier) |
-| `creer_app.sh` | Crée ou met à jour l'application dans `~/Applications` |
+| `moteur.py` | Le cœur : tramage, palettes et effets. Les boucles pixel par pixel sont compilées avec [Numba](https://numba.pydata.org), c'est ce qui rend l'aperçu instantané. |
+| `video.py` | Lecture et écriture des vidéos et GIF avec ffmpeg. |
+| `app.py` | L'interface ([PySide6 / Qt](https://doc.qt.io/qtforpython-6/)). Les couleurs du thème sont en haut du fichier. |
+| `crunchcrab.spec` | La recette [PyInstaller](https://pyinstaller.org) pour fabriquer l'app. |
+| `.github/workflows/` | GitHub construit et teste l'app sur les 3 systèmes à chaque mise à jour, puis publie les versions. |
 
----
+Envie d'ajouter une palette ? Une ligne dans `PALETTES`, dans `moteur.py`, suffit :
+```python
+"Ma palette": ["#000000", "#ff0066", "#ffffff"],
+```
 
-## Contribuer
+## Crédits
 
-Les contributions sont les bienvenues ! Nouvelle méthode de tramage, palette, effet ou simple correction : ouvrez une *issue* ou proposez une *pull request*.
+- Photos des exemples, tirées des données de [scikit-image](https://scikit-image.org) : le chat *Chelsea* (CC0, Stéfan van der Walt), la tasse de café (CC0, Rachel Michetti), la fusée (domaine public, SpaceX).
+- L'app inclut [ffmpeg](https://ffmpeg.org) (via [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg)), distribué sous sa propre licence (GPL).
 
 ## Licence
 
-Je sais pas comment sa marche ca par contre
+[MIT](LICENSE) : tu peux utiliser, modifier et partager Crunch Crab librement.
