@@ -1,0 +1,109 @@
+# Construit et teste Crunch Crab sur macOS, Windows et Linux à chaque mise à jour.
+# Quand on pousse une étiquette de version (ex. v1.0.0), les apps sont publiées dans « Releases ».
+name: Construire
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  construire:
+    name: ${{ matrix.nom }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            nom: macOS
+          - os: windows-latest
+            nom: Windows
+          - os: ubuntu-22.04
+            nom: Linux
+    env:
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Bibliothèques système pour Qt (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libfontconfig1 \
+            libdbus-1-3 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-randr0 libxcb-render-util0 libxcb-image0
+
+      - name: Dépendances Python
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Auto-test du code source
+        run: python app.py --auto-test test-source
+
+      - name: Icônes
+        run: python outils/icones.py
+
+      - name: Construction de l'app
+        run: pyinstaller --noconfirm crunchcrab.spec
+
+      # --- Auto-test de l'app construite, puis mise en paquet -------------------------------
+      - name: macOS — test et paquet
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --deep --sign - "dist/Crunch Crab.app"
+          "dist/Crunch Crab.app/Contents/MacOS/CrunchCrab" --auto-test test-app
+          ditto -c -k --keepParent "dist/Crunch Crab.app" CrunchCrab-macOS.zip
+
+      - name: Windows — test et paquet
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\CrunchCrab\CrunchCrab.exe" `
+               -ArgumentList "--auto-test", "test-app" -Wait -PassThru
+          Get-Content test-app\resultat.txt
+          if ($p.ExitCode -ne 0) { exit 1 }
+          Compress-Archive -Path dist\CrunchCrab -DestinationPath CrunchCrab-Windows.zip
+
+      - name: Linux — test et paquet
+        if: runner.os == 'Linux'
+        run: |
+          ./dist/CrunchCrab/CrunchCrab --auto-test test-app
+          cp icone.png outils/linux/installer.sh dist/CrunchCrab/
+          tar -czf CrunchCrab-Linux.tar.gz -C dist CrunchCrab
+
+      - name: Journal de l'auto-test
+        if: always()
+        shell: bash
+        run: cat test-app/resultat.txt 2>/dev/null || cat test-source/resultat.txt 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CrunchCrab-${{ matrix.nom }}
+          path: CrunchCrab-*.*
+          if-no-files-found: error
+
+  publier:
+    name: Publier la version
+    needs: construire
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Crunch Crab ${{ github.ref_name }}
+          generate_release_notes: true
+          files: CrunchCrab-*.*
